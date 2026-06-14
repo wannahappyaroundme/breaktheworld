@@ -52,19 +52,19 @@ The Korean word "세상" as big bubbly glossy 3D balloon letters, bold rounded c
 A cute white fluffy puppy character with very long floppy ears, big round head, plump little body, big sparkly blue eyes, rosy pink cheeks, tiny happy smile, a small curly tail, diving downward with paws forward like it is flying, thick black outline, flat soft pastel colors, kawaii doodle / flash-game sticker style, centered full body with padding, NO background — fully transparent background, isolated subject, PNG with alpha, high resolution, square, no text, no watermark, no drop shadow
 ```
 
-# 5) thanos.png — 타노스
+# 5) thanos.png — 타노스 (오리지널 묘사 버전, 저작권 우회)
 ```
-A cartoon purple muscular titan villain, big strong chin, stern face, wearing a golden gauntlet glove with six glowing colorful gems on his hand, doing a finger-snap pose, friendly chunky proportions, thick black outline, flat shaded colors, kawaii doodle / flash-game sticker style, centered full body with padding, NO background — fully transparent background, isolated subject, PNG with alpha, high resolution, square, no text, no watermark, no drop shadow
-```
-
-# 6) ironman.png — 아이언맨
-```
-A cartoon red-and-gold armored superhero, sleek helmet with glowing white eyes, a bright blue glowing arc reactor on the chest, one hand extended forward firing a glowing repulsor beam, flying pose, thick black outline, flat shaded metallic colors, kawaii doodle / flash-game sticker style, centered full body with padding, NO background — fully transparent background, isolated subject, PNG with alpha, high resolution, square, no text, no watermark, no drop shadow
+An original cartoon character: a giant purple-skinned cosmic giant warlord, big square chin, calm stern face, wearing a chunky golden power glove studded with six glowing colorful round gems across the knuckles, posed snapping his fingers, sturdy heroic proportions, thick black outline, flat shaded colors, kawaii doodle / flash-game sticker style, original design not based on any franchise, centered full body with padding, NO background — fully transparent background, isolated subject, PNG with alpha, high resolution, square, no text, no watermark, no drop shadow
 ```
 
-# 7) hulk.png — 헐크
+# 6) ironman.png — 아이언맨 (오리지널 묘사 버전, 저작권 우회)
 ```
-A cartoon huge green muscular giant, angry expression with furrowed brows, enormous fists raised up ready to smash down, chunky friendly proportions, ripped purple shorts, thick black outline, flat shaded green colors, kawaii doodle / flash-game sticker style, centered full body with padding, NO background — fully transparent background, isolated subject, PNG with alpha, high resolution, square, no text, no watermark, no drop shadow
+An original cartoon character: a futuristic armored superhero in a sleek red-and-gold powered exosuit, smooth robotic helmet with glowing white eye slits, a round glowing blue energy core on the chest, one palm thrust forward firing a bright glowing energy blast, dynamic flying pose, thick black outline, flat shaded metallic colors, kawaii doodle / flash-game sticker style, original mech design not based on any franchise, centered full body with padding, NO background — fully transparent background, isolated subject, PNG with alpha, high resolution, square, no text, no watermark, no drop shadow
+```
+
+# 7) hulk.png — 헐크 (오리지널 묘사 버전, 저작권 우회)
+```
+An original cartoon character: a huge green-skinned muscular rage monster, furious face with heavy furrowed brows, enormous fists raised up ready to smash down, chunky heroic proportions, torn purple shorts, thick black outline, flat shaded green colors, kawaii doodle / flash-game sticker style, original design not based on any franchise, centered full body with padding, NO background — fully transparent background, isolated subject, PNG with alpha, high resolution, square, no text, no watermark, no drop shadow
 ```
 
 # 8) godzilla.png — 고질라
@@ -87,9 +87,9 @@ A chubby adorable gray kitten, big round body, pointy ears, big cute eyes, rosy 
 A cute pink-purple amorphous blob creature, simple smooth gooey body, tiny black dot eyes and a small wavy smiling mouth, derpy adorable expression, thick black outline, flat pastel purple-pink color with soft shading, kawaii doodle / flash-game sticker style, centered with padding, NO background — fully transparent background, isolated subject, PNG with alpha, high resolution, square, no text, no watermark, no drop shadow
 ```
 
-# 12) pooh.png — 곰돌이 푸
+# 12) pooh.png — 곰돌이 푸 (오리지널 묘사 버전, 저작권 우회)
 ```
-A cute chubby golden-yellow cartoon bear wearing a small red crop t-shirt, round friendly face, holding a honey pot, happy expression, thick black outline, flat warm pastel colors, kawaii doodle / flash-game sticker style, centered full body with padding, NO background — fully transparent background, isolated subject, PNG with alpha, high resolution, square, no text, no watermark, no drop shadow
+An original cartoon character: a cute chubby honey-loving teddy bear with golden-yellow fur, wearing a tiny red shirt, round friendly face, happily hugging a wooden honey pot, soft cuddly proportions, thick black outline, flat warm pastel colors, kawaii doodle / flash-game sticker style, original design not based on any franchise, centered full body with padding, NO background — fully transparent background, isolated subject, PNG with alpha, high resolution, square, no text, no watermark, no drop shadow
 ```
 
 ---
