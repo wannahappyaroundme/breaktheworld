@@ -12,6 +12,8 @@ const CHAR_IDS = new Set<string>([
   'cat',
   'ditto',
   'pooh',
+  'cinnamorollOld',
+  'dittoOld',
 ])
 
 /** Best available icon: character sprite > doodle SVG > emoji. */

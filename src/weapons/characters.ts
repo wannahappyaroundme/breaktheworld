@@ -369,6 +369,29 @@ const saiyan: Weapon = {
   },
 }
 
+// "예전" (previous) versions — the user's AI art, kept as separate weapons.
+const cinnamorollOld: Weapon = {
+  id: 'cinnamorollOld',
+  name: '시나모롤(예전)',
+  icon: '☁️',
+  mode: 'cinematic',
+  cooldown: 0.9,
+  apply(w) {
+    slam(w, charDraw('cinnamorollOld', drawCinnamoroll), { size: 0.5, color: '#ffd23f', sfx: 'thud' })
+  },
+}
+
+const dittoOld: Weapon = {
+  id: 'dittoOld',
+  name: '메타몽(예전)',
+  icon: '🟣',
+  mode: 'cinematic',
+  cooldown: 0.9,
+  apply(w) {
+    slam(w, charDraw('dittoOld', drawDitto), { size: 0.5, color: '#c9a3e8', sfx: 'goo' })
+  },
+}
+
 export const characterWeapons: Weapon[] = [
   cinnamoroll,
   thanos,
@@ -379,4 +402,6 @@ export const characterWeapons: Weapon[] = [
   cat,
   ditto,
   pooh,
+  cinnamorollOld,
+  dittoOld,
 ]

@@ -16,6 +16,8 @@ export type AssetName =
   | 'cat'
   | 'ditto'
   | 'pooh'
+  | 'cinnamorollOld'
+  | 'dittoOld'
 
 const FILES: Record<AssetName, string> = {
   earth: 'earth.png',
@@ -30,6 +32,8 @@ const FILES: Record<AssetName, string> = {
   cat: 'cat.png',
   ditto: 'ditto.png',
   pooh: 'pooh.png',
+  cinnamorollOld: 'cinnamoroll-old.png',
+  dittoOld: 'ditto-old.png',
 }
 
 const images = new Map<AssetName, HTMLImageElement>()
