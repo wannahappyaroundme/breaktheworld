@@ -1,0 +1,22 @@
+{
+  "name": "breaktheworld",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "세상 부수기 — 모바일 전용 스트레스 해소 파괴 애니메이션",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "roughjs": "^4.6.6"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "vite": "^5.2.11",
+    "vitest": "^1.6.0"
+  }
+}

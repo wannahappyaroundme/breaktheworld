@@ -1,0 +1,16 @@
+{
+  "name": "세상 부수기",
+  "short_name": "세상부수기",
+  "description": "통쾌하게 세상을 부수며 스트레스를 푸는 모바일 게임",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0d1326",
+  "theme_color": "#0d1326",
+  "lang": "ko",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

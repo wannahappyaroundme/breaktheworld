@@ -1,0 +1,234 @@
+:root {
+  --bg-0: #0d1326;
+  --bg-1: #1a2342;
+  --ink: #1d1d28;
+  --accent: #ffd23f;
+  --panel: rgba(20, 26, 48, 0.72);
+  --panel-edge: rgba(255, 255, 255, 0.14);
+  font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Noto Sans KR',
+    'Segoe UI', system-ui, sans-serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+}
+
+body {
+  background: radial-gradient(circle at 50% 30%, var(--bg-1), var(--bg-0) 70%);
+  color: #fff;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+}
+
+#stage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+#ui {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+#ui > * {
+  pointer-events: auto;
+}
+
+/* ===== HUD: top bar ===== */
+.hud-top {
+  position: absolute;
+  top: max(10px, env(safe-area-inset-top));
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  gap: 10px;
+}
+
+.combo {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
+  transition: transform 0.08s ease-out;
+}
+.combo .n {
+  font-size: 38px;
+  font-weight: 800;
+  color: var(--accent);
+}
+.combo .label {
+  font-size: 11px;
+  letter-spacing: 2px;
+  opacity: 0.7;
+  margin-top: 2px;
+}
+.combo.bump {
+  transform: scale(1.18);
+}
+
+.top-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.icon-btn {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  border: 1.5px solid var(--panel-edge);
+  background: var(--panel);
+  color: #fff;
+  font-size: 20px;
+  display: grid;
+  place-items: center;
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  transition: transform 0.06s;
+}
+.icon-btn:active {
+  transform: scale(0.9);
+}
+
+/* ===== HUD: weapon bar (bottom) ===== */
+.weapon-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: max(8px, env(safe-area-inset-bottom));
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 8px 12px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  mask-image: linear-gradient(90deg, transparent, #000 18px, #000 calc(100% - 18px), transparent);
+}
+.weapon-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.weapon {
+  flex: 0 0 auto;
+  width: 60px;
+  height: 70px;
+  border-radius: 16px;
+  border: 1.5px solid var(--panel-edge);
+  background: var(--panel);
+  backdrop-filter: blur(8px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  scroll-snap-align: center;
+  transition: transform 0.08s, border-color 0.12s, background 0.12s;
+}
+.weapon .emoji {
+  font-size: 26px;
+  line-height: 1;
+}
+.weapon .name {
+  font-size: 9.5px;
+  opacity: 0.82;
+  white-space: nowrap;
+}
+.weapon:active {
+  transform: scale(0.9);
+}
+.weapon.selected {
+  border-color: var(--accent);
+  background: rgba(255, 210, 63, 0.16);
+  box-shadow: 0 0 0 1px var(--accent), 0 6px 20px rgba(255, 210, 63, 0.25);
+}
+
+/* ===== tap hint ===== */
+#tap-hint {
+  position: absolute;
+  left: 50%;
+  top: 62%;
+  transform: translateX(-50%);
+  z-index: 6;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #fff;
+  opacity: 0.85;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  animation: hintPulse 1.6s ease-in-out infinite;
+}
+#tap-hint.hidden {
+  display: none;
+}
+@keyframes hintPulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: translateX(-50%) scale(0.98);
+  }
+  50% {
+    opacity: 0.9;
+    transform: translateX(-50%) scale(1.04);
+  }
+}
+
+/* ===== current weapon label flash ===== */
+.weapon-flash {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 30px;
+  font-weight: 900;
+  color: #fff;
+  text-shadow: 0 3px 0 var(--ink), 0 0 24px rgba(255, 210, 63, 0.7);
+  pointer-events: none;
+  z-index: 6;
+  opacity: 0;
+}
+.weapon-flash.show {
+  animation: weaponFlash 0.7s ease-out;
+}
+@keyframes weaponFlash {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.6);
+  }
+  25% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -60%) scale(1);
+  }
+}
