@@ -25,7 +25,7 @@ type CharDrawer = (ctx: CanvasRenderingContext2D, cx: number, cy: number, s: num
 function charDraw(name: AssetName, fallback: CharDrawer): CharDrawer {
   return (ctx, cx, cy, s) => {
     const img = getImage(name)
-    if (img) drawImageCentered(ctx, img, cx, cy, s * 1.15)
+    if (img) drawImageCentered(ctx, img, cx, cy, s * 1.35)
     else fallback(ctx, cx, cy, s)
   }
 }
