@@ -152,9 +152,28 @@ body {
   scroll-snap-align: center;
   transition: transform 0.08s, border-color 0.12s, background 0.12s;
 }
-.weapon .emoji {
+.weapon .wicon {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.weapon .wicon .emoji {
   font-size: 26px;
   line-height: 1;
+}
+.weapon .wicon-img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
+}
+.weapon .wicon-svg {
+  display: flex;
+}
+.weapon .wicon-svg svg {
+  width: 31px;
+  height: 31px;
 }
 .weapon .name {
   font-size: 9.5px;

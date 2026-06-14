@@ -22,3 +22,6 @@ secrets/
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+# local dev preview tools
+*preview*.html
