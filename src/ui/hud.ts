@@ -2,6 +2,7 @@ export interface HudCallbacks {
   onToggleSound: () => void
   onReset: () => void
   onNext: () => void
+  onWhatsNew: () => void
 }
 
 /** Top HUD: combo counter + sound / next / reset buttons + weapon name flash. */
@@ -25,10 +26,11 @@ export class Hud {
 
     const buttons = document.createElement('div')
     buttons.className = 'top-buttons'
+    const newsBtn = mkBtn('✨', cb.onWhatsNew)
     this.soundBtn = mkBtn('🔊', cb.onToggleSound)
     const nextBtn = mkBtn('⏭️', cb.onNext)
     const resetBtn = mkBtn('🔄', cb.onReset)
-    buttons.append(this.soundBtn, nextBtn, resetBtn)
+    buttons.append(newsBtn, this.soundBtn, nextBtn, resetBtn)
 
     top.append(this.comboBox, buttons)
     parent.appendChild(top)

@@ -15,6 +15,7 @@ import type { Weapon, World } from './weapons/weapon'
 import type { Target } from './targets/target'
 import { glassBits, confetti, smoke } from './weapons/fx'
 import { Hud } from './ui/hud'
+import { WhatsNew } from './ui/whatsnew'
 import { WeaponBar } from './weapons/bar'
 
 const COMBO_RESET_SEC = 1.6
@@ -39,6 +40,7 @@ export class Game {
   private manager: TargetManager
   private weapon: Weapon
   private hud: Hud
+  private whatsNew: WhatsNew
   private bar: WeaponBar
   private combo = 0
   private comboTimer = 0
@@ -71,15 +73,18 @@ export class Game {
     this.best = Number(localStorage.getItem(BEST_KEY) || '0') || 0
     this.totalTargets = Number(localStorage.getItem(STATS_KEY) || '0') || 0
     this.weapon = findWeapon(defaultWeaponId)
+    this.whatsNew = new WhatsNew(uiRoot)
     this.hud = new Hud(uiRoot, {
       onToggleSound: this.onToggleSound,
       onReset: this.onReset,
       onNext: this.onNext,
+      onWhatsNew: () => this.whatsNew.open(),
     })
     this.hud.setBest(this.best)
     this.bar = new WeaponBar(uiRoot, weapons, (w) => this.selectWeapon(w))
     this.bar.select(this.weapon.id)
     this.hintEl = document.getElementById('tap-hint')
+    this.whatsNew.maybeShowOnLoad()
 
     new Input(canvas, (hit) => this.onHit(hit))
     window.addEventListener('resize', () =>
