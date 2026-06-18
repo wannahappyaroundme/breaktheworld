@@ -437,6 +437,13 @@ body {
   opacity: 1;
   pointer-events: auto;
 }
+/* beat `#ui > * { pointer-events:auto }` so a CLOSED modal never blocks taps */
+#ui > .modal-backdrop {
+  pointer-events: none;
+}
+#ui > .modal-backdrop.show {
+  pointer-events: auto;
+}
 
 .whatsnew {
   width: min(86vw, 340px);
