@@ -1,7 +1,7 @@
 import type { Weapon, World } from './weapon'
 import type { Effect } from '../effects/types'
 import * as fx from './fx'
-import { explosion, shockwave, crack, beam, speedLines } from '../effects/primitives'
+import { explosion, shockwave, crack, beam, speedLines, emojiBurst } from '../effects/primitives'
 import { clamp, easeInCubic, easeOutCubic, easeOutBack } from '../engine/math'
 import { getImage, drawImageCentered, type AssetName } from '../art/assets'
 import {
@@ -64,7 +64,13 @@ function actor(
 function slam(
   w: World,
   drawChar: (ctx: CanvasRenderingContext2D, cx: number, cy: number, s: number) => void,
-  o: { size?: number; color?: string; sfx?: 'thud' | 'squash' | 'goo'; extra?: (x: number, y: number) => void } = {}
+  o: {
+    size?: number
+    color?: string
+    sfx?: 'thud' | 'squash' | 'goo'
+    emojis?: string[]
+    extra?: (x: number, y: number) => void
+  } = {}
 ): void {
   const x = w.target.cx
   const y = w.target.cy
@@ -75,6 +81,16 @@ function slam(
       0.95,
       0.45,
       (ctx, p) => {
+        // landing telegraph shadow (anticipation)
+        const sp = clamp(p / 0.45, 0, 1)
+        ctx.save()
+        ctx.globalAlpha = 0.22 * sp * (p < 0.45 ? 1 : 1 - (p - 0.45) / 0.55)
+        ctx.fillStyle = '#000000'
+        ctx.beginPath()
+        ctx.ellipse(x, y + size * 0.42, size * 0.46 * sp, size * 0.16 * sp, 0, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.restore()
+
         let cy: number
         let expand = 0
         if (p < 0.45) {
@@ -95,6 +111,7 @@ function slam(
         w.target.detachAll(x, y, 80, 'squash')
         w.effects.add(speedLines(x, y, { count: 16, color: o.color ?? '#ffd23f', r0: 24, r1: 190 }))
         w.effects.add(shockwave(x, y, 210, { color: '#ffffff', width: 12 }))
+        w.effects.add(emojiBurst(x, y, o.emojis ?? ['💥', '✨']))
         fx.dust(w.particles, x, y, 24)
         fx.debris(w.particles, x, y, 26, EARTH)
         w.camera.shake(28)
@@ -114,7 +131,12 @@ const cinnamoroll: Weapon = {
   mode: 'cinematic',
   cooldown: 0.9,
   apply(w) {
-    slam(w, charDraw('cinnamoroll', drawCinnamoroll), { size: 0.5, color: '#ffd23f', sfx: 'thud' })
+    slam(w, charDraw('cinnamoroll', drawCinnamoroll), {
+      size: 0.5,
+      color: '#ffd23f',
+      sfx: 'thud',
+      emojis: ['☁️', '💙', '🐾'],
+    })
   },
 }
 
@@ -125,7 +147,12 @@ const cat: Weapon = {
   mode: 'cinematic',
   cooldown: 0.9,
   apply(w) {
-    slam(w, charDraw('cat', drawCat), { size: 0.5, color: '#ffb3c0', sfx: 'squash' })
+    slam(w, charDraw('cat', drawCat), {
+      size: 0.5,
+      color: '#ffb3c0',
+      sfx: 'squash',
+      emojis: ['🐾', '😼', '💢'],
+    })
   },
 }
 
@@ -140,6 +167,7 @@ const pooh: Weapon = {
       size: 0.5,
       color: '#ffb43a',
       sfx: 'goo',
+      emojis: ['🍯', '🐝', '💛'],
       extra: (x, y) => {
         w.particles.burst(x, y, 26, 'dust', {
           speed: [60, 280],
@@ -161,7 +189,12 @@ const ditto: Weapon = {
   mode: 'cinematic',
   cooldown: 0.9,
   apply(w) {
-    slam(w, charDraw('ditto', drawDitto), { size: 0.5, color: '#c9a3e8', sfx: 'goo' })
+    slam(w, charDraw('ditto', drawDitto), {
+      size: 0.5,
+      color: '#c9a3e8',
+      sfx: 'goo',
+      emojis: ['🟣', '💜', '✨'],
+    })
   },
 }
 
@@ -193,6 +226,7 @@ const thanos: Weapon = {
         () => {
           w.target.detachFraction(0.5, 'dissolve')
           w.effects.add(speedLines(gx, gy, { count: 12, color: '#e3c6ff', r0: 12, r1: 150 }))
+          w.effects.add(emojiBurst(w.target.cx, w.target.cy, ['💜', '✨', '🫰']))
           fx.ash(w.particles, w.target.cx, w.target.cy, 34)
           w.camera.flash('#e3c6ff', 0.32)
           w.camera.shake(12)
@@ -230,6 +264,7 @@ const ironman: Weapon = {
           w.target.detachAll(tx, ty, 85, 'fall')
           w.effects.add(explosion(tx, ty, 180))
           w.effects.add(shockwave(tx, ty, 210, { color: '#bff0ff', width: 12 }))
+          w.effects.add(emojiBurst(tx, ty, ['❤️', '💛', '⚡']))
           fx.debris(w.particles, tx, ty, 28, EARTH)
           fx.fireBits(w.particles, tx, ty, 18)
           w.camera.shake(24)
@@ -268,6 +303,7 @@ const hulk: Weapon = {
           w.target.detachAll(x, y, 95, 'fall')
           w.effects.add(crack(x, y, { branches: 9, len: 170 }))
           w.effects.add(shockwave(x, y, 250, { color: '#cdf5b0', width: 16 }))
+          w.effects.add(emojiBurst(x, y, ['💚', '💪', '💥']))
           fx.debris(w.particles, x, y, 34, EARTH)
           fx.dust(w.particles, x, y, 22)
           w.camera.shake(32)
@@ -307,6 +343,7 @@ const godzilla: Weapon = {
           w.effects.add(beam(mouthX, mouthY, tx, ty, { color: '#9b6cff', core: '#eaff00', width: 20, dur: 0.4 }))
           w.target.detachAll(tx, ty, 90, 'fall')
           w.effects.add(explosion(tx, ty, 175, { hot: '#eaff7a', cool: '#6b3bff' }))
+          w.effects.add(emojiBurst(tx, ty, ['🦖', '🔥', '💥']))
           fx.fireBits(w.particles, tx, ty, 20)
           fx.debris(w.particles, tx, ty, 26, EARTH)
           w.camera.shake(26)
@@ -357,6 +394,7 @@ const saiyan: Weapon = {
           w.effects.add(beam(hx, hy, w.w + 100, hy, { color: '#8fd0ff', core: '#fff', width: 22, dur: 0.5 }))
           w.target.detachAll(tx, ty, 100, 'fall')
           w.effects.add(explosion(tx, ty, 200))
+          w.effects.add(emojiBurst(tx, ty, ['⚡', '💙', '✨']))
           fx.debris(w.particles, tx, ty, 30, EARTH)
           fx.sparks(w.particles, tx, ty, 20, ['#8fd0ff', '#ffffff'])
           w.camera.shake(30)
@@ -377,7 +415,12 @@ const cinnamorollOld: Weapon = {
   mode: 'cinematic',
   cooldown: 0.9,
   apply(w) {
-    slam(w, charDraw('cinnamorollOld', drawCinnamoroll), { size: 0.5, color: '#ffd23f', sfx: 'thud' })
+    slam(w, charDraw('cinnamorollOld', drawCinnamoroll), {
+      size: 0.5,
+      color: '#ffd23f',
+      sfx: 'thud',
+      emojis: ['☁️', '💙', '🐾'],
+    })
   },
 }
 
@@ -388,7 +431,12 @@ const dittoOld: Weapon = {
   mode: 'cinematic',
   cooldown: 0.9,
   apply(w) {
-    slam(w, charDraw('dittoOld', drawDitto), { size: 0.5, color: '#c9a3e8', sfx: 'goo' })
+    slam(w, charDraw('dittoOld', drawDitto), {
+      size: 0.5,
+      color: '#c9a3e8',
+      sfx: 'goo',
+      emojis: ['🟣', '💜', '✨'],
+    })
   },
 }
 

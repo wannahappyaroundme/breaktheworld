@@ -408,6 +408,74 @@ export function frostRing(x: number, y: number, maxR: number, o: { dur?: number 
   }
 }
 
+interface EmojiP {
+  x: number
+  y: number
+  vx: number
+  vy: number
+  rot: number
+  vrot: number
+  em: string
+  s: number
+}
+
+/** Cute signature emoji shards bursting upward (character finishers). */
+export function emojiBurst(
+  x: number,
+  y: number,
+  emojis: string[],
+  o: { count?: number; dur?: number; size?: number } = {}
+): Effect {
+  const count = o.count ?? 7
+  const dur = o.dur ?? 1.05
+  const size = o.size ?? 46
+  const parts: EmojiP[] = []
+  for (let i = 0; i < count; i++) {
+    const a = -Math.PI / 2 + rng.spread(Math.PI / 2)
+    const sp = rng.range(140, 360)
+    parts.push({
+      x,
+      y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp - 140,
+      rot: rng.spread(0.4),
+      vrot: rng.spread(3),
+      em: rng.pick(emojis),
+      s: size * rng.range(0.7, 1.25),
+    })
+  }
+  let t = 0
+  return {
+    z: 3,
+    update(dt) {
+      t += dt
+      for (const p of parts) {
+        p.vy += 560 * dt
+        p.x += p.vx * dt
+        p.y += p.vy * dt
+        p.rot += p.vrot * dt
+      }
+      return t < dur
+    },
+    draw(ctx) {
+      const k = 1 - t / dur
+      ctx.save()
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.globalAlpha = Math.max(0, Math.min(1, k * 1.5))
+      for (const p of parts) {
+        ctx.save()
+        ctx.translate(p.x, p.y)
+        ctx.rotate(p.rot)
+        ctx.font = `${p.s}px serif`
+        ctx.fillText(p.em, 0, 0)
+        ctx.restore()
+      }
+      ctx.restore()
+    },
+  }
+}
+
 /** Swirling tornado funnel from topY to bottomY centered on x. */
 export function tornado(
   x: number,

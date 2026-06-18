@@ -200,6 +200,17 @@ export class Particles {
           ctx.closePath()
           ctx.fill()
           ctx.stroke()
+          if (p.kind === 'glass') {
+            // glassy twinkle
+            const sh = Math.sin(p.age * 16 + p.rot * 6)
+            if (sh > 0.4) {
+              ctx.globalAlpha = Math.min(1, t * 1.6) * (sh - 0.4) * 1.6
+              ctx.fillStyle = '#ffffff'
+              ctx.beginPath()
+              ctx.arc(0, -s * 0.2, s * 0.3, 0, TAU)
+              ctx.fill()
+            }
+          }
           ctx.restore()
           break
         }
