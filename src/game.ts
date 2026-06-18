@@ -12,10 +12,23 @@ import { createCity } from './targets/city'
 import { createWord } from './targets/word'
 import { weapons, defaultWeaponId, findWeapon } from './weapons/registry'
 import type { Weapon, World } from './weapons/weapon'
+import type { Target } from './targets/target'
+import { glassBits, confetti, smoke } from './weapons/fx'
 import { Hud } from './ui/hud'
 import { WeaponBar } from './weapons/bar'
 
 const COMBO_RESET_SEC = 1.6
+const BEST_KEY = 'btw.bestCombo'
+const STATS_KEY = 'btw.totalTargets'
+const GRADES: { n: number; label: string }[] = [
+  { n: 10, label: 'GREAT!' },
+  { n: 20, label: 'SUPER!!' },
+  { n: 30, label: 'INSANE!!!' },
+  { n: 50, label: 'GODLIKE 🔥' },
+  { n: 75, label: 'UNREAL ⚡' },
+  { n: 100, label: '🌌 OMG 100' },
+]
+const MILESTONES = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000]
 
 export class Game {
   private renderer: Renderer
@@ -29,6 +42,10 @@ export class Game {
   private bar: WeaponBar
   private combo = 0
   private comboTimer = 0
+  private best = 0
+  private recordActive = false
+  private totalTargets = 0
+  private hitStop = 0
   private cinematicCooldown = 0
   private hintHidden = false
   private hintEl: HTMLElement | null
@@ -39,18 +56,27 @@ export class Game {
     const cap = area > 900000 ? 1500 : area > 450000 ? 1200 : 900
     this.particles = new Particles(cap)
 
+    // 세상 → 지구 → 도시 → (반복), 각 타겟은 하늘에서 떨어져 등장
     this.manager = new TargetManager(
-      { factories: [createEarth, createCity, createWord], swapDelaySec: 0.9 },
+      {
+        factories: [createWord, createEarth, createCity],
+        swapDelaySec: 0.8,
+        onDestroyed: (t) => this.celebrate(t),
+        onSpawn: () => this.audio.play('whoosh'),
+      },
       this.renderer.width,
       this.renderer.height
     )
 
+    this.best = Number(localStorage.getItem(BEST_KEY) || '0') || 0
+    this.totalTargets = Number(localStorage.getItem(STATS_KEY) || '0') || 0
     this.weapon = findWeapon(defaultWeaponId)
     this.hud = new Hud(uiRoot, {
       onToggleSound: this.onToggleSound,
       onReset: this.onReset,
       onNext: this.onNext,
     })
+    this.hud.setBest(this.best)
     this.bar = new WeaponBar(uiRoot, weapons, (w) => this.selectWeapon(w))
     this.bar.select(this.weapon.id)
     this.hintEl = document.getElementById('tap-hint')
@@ -128,24 +154,82 @@ export class Game {
     this.addCombo()
   }
 
+  private haptic(pattern: number | number[]): void {
+    if (navigator.vibrate) navigator.vibrate(pattern)
+  }
+
   private addCombo(): void {
     this.combo++
     this.comboTimer = COMBO_RESET_SEC
     this.hud.setCombo(this.combo)
+    this.haptic(8)
+
+    // combo grade labels (GREAT / SUPER / INSANE ...)
+    const grade = GRADES.find((g) => g.n === this.combo)
+    if (grade) {
+      this.hud.gradeFlash(grade.label)
+      this.camera.shake(10)
+      this.haptic([18, 20, 18])
+    }
+
+    if (this.combo > this.best) {
+      this.best = this.combo
+      localStorage.setItem(BEST_KEY, String(this.best))
+      this.hud.setBest(this.best)
+      if (!this.recordActive && this.combo >= 5) {
+        this.recordActive = true
+        this.hud.showNewRecord(this.best)
+        this.haptic([40, 30, 40, 30, 90])
+        confetti(this.particles, this.renderer.cx, this.renderer.cy * 0.6, 40)
+        this.camera.flash('#ffe9a8', 0.3)
+      }
+    }
+  }
+
+  /** Big satisfying flourish when a target is fully destroyed. */
+  private celebrate(t: Target): void {
+    const x = t.cx
+    const y = t.cy
+    glassBits(this.particles, x, y, 36)
+    confetti(this.particles, x, y, 28)
+    smoke(this.particles, x, y, 8)
+    this.camera.flash('#ffffff', 0.28)
+    this.camera.shake(22)
+    this.camera.punch(0.05)
+    this.hitStop = 0.08
+    this.haptic([30, 40, 60])
+    this.audio.play('glass')
+    this.audio.play('bigboom')
+    this.hud.popup(`${t.name} 와장창! 💥`)
+
+    // cumulative milestone (loss-aversion retention)
+    this.totalTargets++
+    localStorage.setItem(STATS_KEY, String(this.totalTargets))
+    if (MILESTONES.includes(this.totalTargets)) {
+      this.hud.toast(`🎉 ${this.totalTargets}번째 파괴 달성!`)
+    }
   }
 
   private frame(dtMs: number): void {
-    const dt = dtMs / 1000
-    if (this.cinematicCooldown > 0) this.cinematicCooldown = Math.max(0, this.cinematicCooldown - dt)
+    const realDt = dtMs / 1000
+    // hit-stop: briefly slow the world for a punchy "freeze then burst"
+    if (this.hitStop > 0) this.hitStop = Math.max(0, this.hitStop - realDt)
+    const scale = this.hitStop > 0 ? 0.15 : 1
+    const dt = realDt * scale
+    const worldDtMs = dtMs * scale
+
+    // timers run on real time (unaffected by hit-stop)
+    if (this.cinematicCooldown > 0) this.cinematicCooldown = Math.max(0, this.cinematicCooldown - realDt)
     if (this.comboTimer > 0) {
-      this.comboTimer -= dt
+      this.comboTimer -= realDt
       if (this.comboTimer <= 0 && this.combo > 0) {
         this.combo = 0
+        this.recordActive = false
         this.hud.setCombo(0)
       }
     }
 
-    this.camera.update(dtMs)
+    this.camera.update(worldDtMs)
     this.particles.update(dt, this.renderer.width, this.renderer.height)
     this.effects.update(dt)
     this.manager.update(dt, this.renderer.width, this.renderer.height)
@@ -170,6 +254,7 @@ export class Game {
   private onReset = (): void => {
     this.manager.reset(this.renderer.width, this.renderer.height)
     this.combo = 0
+    this.recordActive = false
     this.hud.setCombo(0)
     this.effects.clear()
     this.particles.clear()

@@ -71,6 +71,7 @@ class StubTarget implements Target {
     return 0
   }
   reposition(): void {}
+  dropIn(): void {}
   get attachedCount() {
     return this.alive ? 1 : 0
   }

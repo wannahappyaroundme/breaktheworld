@@ -25,6 +25,7 @@ export class TargetManager {
     this.swapDelay = opts.swapDelaySec ?? 0.9
     this.onDestroyed = opts.onDestroyed
     this.onSpawn = opts.onSpawn
+    // first target appears in place; subsequent ones drop from the sky
     this.current = this.factories[0](w, h)
     this.current.reposition(w, h)
     this.onSpawn?.(this.current)
@@ -49,6 +50,7 @@ export class TargetManager {
     this.i = (this.i + 1) % this.factories.length
     this.current = this.factories[this.i](w, h)
     this.current.reposition(w, h)
+    this.current.dropIn()
     this.swapping = false
     this.onSpawn?.(this.current)
   }

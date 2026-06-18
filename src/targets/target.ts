@@ -22,4 +22,6 @@ export interface Target {
   readonly isDestroyed: boolean
 
   reposition(w: number, h: number): void
+  /** play the sky-fall entrance animation */
+  dropIn(): void
 }

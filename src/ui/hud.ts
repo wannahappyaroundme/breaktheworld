@@ -8,6 +8,7 @@ export interface HudCallbacks {
 export class Hud {
   private comboN: HTMLSpanElement
   private comboBox: HTMLDivElement
+  private bestEl!: HTMLSpanElement
   private soundBtn: HTMLButtonElement
   private parent: HTMLElement
 
@@ -18,8 +19,9 @@ export class Hud {
 
     this.comboBox = document.createElement('div')
     this.comboBox.className = 'combo'
-    this.comboBox.innerHTML = `<span class="n">0</span><span class="label">COMBO</span>`
+    this.comboBox.innerHTML = `<span class="n">0</span><span class="label">COMBO</span><span class="best">🏆 0</span>`
     this.comboN = this.comboBox.querySelector('.n') as HTMLSpanElement
+    this.bestEl = this.comboBox.querySelector('.best') as HTMLSpanElement
 
     const buttons = document.createElement('div')
     buttons.className = 'top-buttons'
@@ -48,6 +50,46 @@ export class Hud {
     el.textContent = name + '!'
     this.parent.appendChild(el)
     window.setTimeout(() => el.remove(), 700)
+  }
+
+  setBest(n: number): void {
+    this.bestEl.textContent = `🏆 ${n}`
+  }
+
+  /** Top banner shown when the player beats their best combo. */
+  showNewRecord(n: number): void {
+    const el = document.createElement('div')
+    el.className = 'record-banner show'
+    el.innerHTML = `🎉 신기록! <b>${n}</b> 콤보`
+    this.parent.appendChild(el)
+    window.setTimeout(() => el.remove(), 1800)
+  }
+
+  /** Center celebratory popup, e.g. when a target is destroyed. */
+  popup(text: string): void {
+    const el = document.createElement('div')
+    el.className = 'celebrate-popup show'
+    el.textContent = text
+    this.parent.appendChild(el)
+    window.setTimeout(() => el.remove(), 900)
+  }
+
+  /** Combo grade flash (GREAT / SUPER / INSANE ...). */
+  gradeFlash(label: string): void {
+    const el = document.createElement('div')
+    el.className = 'grade-flash show'
+    el.textContent = label
+    this.parent.appendChild(el)
+    window.setTimeout(() => el.remove(), 800)
+  }
+
+  /** Neutral top toast, e.g. cumulative milestones. */
+  toast(text: string): void {
+    const el = document.createElement('div')
+    el.className = 'toast show'
+    el.textContent = text
+    this.parent.appendChild(el)
+    window.setTimeout(() => el.remove(), 2000)
   }
 }
 

@@ -1,5 +1,5 @@
 import { Rng } from '../engine/rng'
-import { dist } from '../engine/math'
+import { dist, easeOutBounce } from '../engine/math'
 import { shatter, polyCentroid, type Pt } from './shatter'
 import type { Target, DetachMode } from './target'
 
@@ -49,6 +49,12 @@ export class Breakable implements Target {
   private originX = 0
   private originY = 0
   private centerYFrac: number
+  // sky-fall entrance
+  private dropY = 0
+  private dropFrom = 0
+  private dropT = 0
+  private dropDur = 0.62
+  private dropping = false
 
   constructor(opts: BreakableOptions) {
     this.name = opts.name
@@ -133,6 +139,14 @@ export class Breakable implements Target {
   reposition(w: number, h: number): void {
     this.originX = Math.round(w / 2 - this.spriteW / 2)
     this.originY = Math.round(h * this.centerYFrac - this.spriteH / 2)
+  }
+
+  /** Animate the target dropping in from above the screen with a bounce. */
+  dropIn(): void {
+    this.dropping = true
+    this.dropT = 0
+    this.dropFrom = -(this.originY + this.spriteH + 80)
+    this.dropY = this.dropFrom
   }
 
   get cx(): number {
@@ -224,6 +238,15 @@ export class Breakable implements Target {
   }
 
   update(dtSec: number, _w: number, h: number): void {
+    if (this.dropping) {
+      this.dropT += dtSec
+      const p = this.dropT / this.dropDur
+      this.dropY = this.dropFrom * (1 - easeOutBounce(p))
+      if (p >= 1) {
+        this.dropY = 0
+        this.dropping = false
+      }
+    }
     if (this.detached.length === 0) return
     for (const f of this.detached) {
       if (f.mode === 'dissolve') {
@@ -245,7 +268,9 @@ export class Breakable implements Target {
   }
 
   draw(ctx: CanvasRenderingContext2D): void {
-    // intact fast-path
+    // attached body (with sky-fall offset)
+    ctx.save()
+    if (this.dropY !== 0) ctx.translate(0, this.dropY)
     if (this.detached.length === 0 && this.attached.length === this.total) {
       ctx.drawImage(this.master, this.originX, this.originY)
     } else {
@@ -253,7 +278,8 @@ export class Breakable implements Target {
         ctx.drawImage(f.canvas, this.originX + f.bx, this.originY + f.by)
       }
     }
-    // detached shards
+    ctx.restore()
+    // detached shards (own physics, no drop offset)
     for (const f of this.detached) {
       ctx.save()
       ctx.globalAlpha = Math.max(0, Math.min(1, f.alpha))
