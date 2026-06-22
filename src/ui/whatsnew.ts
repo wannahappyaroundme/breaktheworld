@@ -1,13 +1,12 @@
-const VERSION = 'upgrade-2026-06'
-const SEEN_KEY = 'btw.seenVersion'
-
 const ITEMS: { e: string; t: string }[] = [
-  { e: '🌍', t: '무한 연쇄! 세상 → 지구 → 도시가 하늘에서 뚝뚝 떨어져요' },
-  { e: '🏆', t: '콤보 신기록 저장 + 상단 표시, 갱신하면 축하 폭죽!' },
-  { e: '🧊', t: '와장창 쾌감 업 — 히트스톱·유리 반짝임·진동' },
-  { e: '💥', t: '파괴할 때 “와장창!” 팝업 + 콤보 등급(GREAT/SUPER…)' },
-  { e: '💛', t: '캐릭터 시그니처 이모지 파편 ☁️🐾🍯 + 등장 그림자' },
-  { e: '☁️', t: '시나모롤·메타몽 새 그림 (예전 버전도 무기로 남겼어요)' },
+  { e: '💰', t: '황금 타겟 등장! 가끔 떨어지는 골든 타겟을 부수면 잭팟 🎉' },
+  { e: '🌈', t: 'FEVER 모드 — 콤보가 폭주하면 화면이 무지개로 미쳐가요' },
+  { e: '📸', t: '공유 카드 — 상단 📸로 내 최고 기록을 친구에게 자랑!' },
+  { e: '🎬', t: '들어오면 알아서 부수는 자동 시연 → 탭하면 바로 참여' },
+  { e: '🌍', t: '무한 연쇄: 세상 → 지구 → 도시가 하늘에서 뚝뚝' },
+  { e: '🏆', t: '콤보 신기록 저장 + 갱신하면 축하 폭죽' },
+  { e: '🧊', t: '와장창 쾌감 — 히트스톱·유리 반짝임·진동' },
+  { e: '☁️', t: '시나모롤·메타몽 새 그림 (예전 버전도 무기로!)' },
 ]
 
 /** Small centered "what's new" modal. Auto-shows once per version; reopenable. */
@@ -42,11 +41,10 @@ export class WhatsNew {
 
   close(): void {
     this.backdrop.classList.remove('show')
-    localStorage.setItem(SEEN_KEY, VERSION)
   }
 
-  /** Show automatically the first time a user opens this version. */
+  /** Show on every load (per user request). */
   maybeShowOnLoad(): void {
-    if (localStorage.getItem(SEEN_KEY) !== VERSION) this.open()
+    this.open()
   }
 }

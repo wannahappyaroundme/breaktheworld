@@ -33,6 +33,7 @@ const GRADES: { n: number; label: string }[] = [
 const MILESTONES = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000]
 const GOLDEN_CHANCE = 0.18
 const FEVER_AT = [30, 60, 100, 150, 200]
+const FEVER_DUR = 6
 
 export class Game {
   private renderer: Renderer
@@ -54,6 +55,9 @@ export class Game {
   private spawnCount = 0
   private attract = false
   private attractTimer = 0
+  private feverActive = false
+  private feverTimer = 0
+  private feverHue = 0
   private cinematicCooldown = 0
   private hintHidden = false
   private hintEl: HTMLElement | null
@@ -104,6 +108,7 @@ export class Game {
     new GameLoop((dtMs) => this.frame(dtMs)).start()
 
     if (location.search.includes('demo')) this.runDemo()
+    if (location.search.includes('fever')) window.setTimeout(() => this.enterFever(), 700)
   }
 
   /** Auto-fire a weapon around the target (for screenshots/demos: ?demo or ?demo=thanos). */
@@ -193,15 +198,17 @@ export class Game {
     this.hud.setCombo(this.combo)
     this.haptic(8)
 
-    // combo grade labels (GREAT / SUPER / INSANE ...)
-    const grade = GRADES.find((g) => g.n === this.combo)
-    if (grade) {
-      this.hud.gradeFlash(grade.label)
-      this.camera.shake(10)
-      this.haptic([18, 20, 18])
+    // FEVER takes priority over a grade flash at the same combo (avoids overlap)
+    if (FEVER_AT.includes(this.combo)) {
+      this.enterFever()
+    } else {
+      const grade = GRADES.find((g) => g.n === this.combo)
+      if (grade) {
+        this.hud.gradeFlash(grade.label)
+        this.camera.shake(10)
+        this.haptic([18, 20, 18])
+      }
     }
-    // FEVER burst at combo peaks
-    if (FEVER_AT.includes(this.combo)) this.fever()
 
     if (this.combo > this.best) {
       this.best = this.combo
@@ -227,9 +234,12 @@ export class Game {
     }
   }
 
-  /** Spectacular one-shot when the combo curve peaks. */
-  private fever(): void {
-    this.hud.popup('🌈 FEVER!!!')
+  /** Enter (or refresh) the sustained FEVER mode at a combo peak. */
+  private enterFever(): void {
+    const wasActive = this.feverActive
+    this.feverActive = true
+    this.feverTimer = FEVER_DUR
+    this.hud.setFever(true)
     this.camera.flash('#ff4d9d', 0.45)
     this.camera.shake(34)
     this.camera.punch(0.07)
@@ -245,7 +255,27 @@ export class Game {
       size: [2, 4],
       colors: ['#ff4d9d', '#ffd23f', '#7fd0ff', '#7cc95a', '#b06bff'],
     })
-    this.manager.current.detachAll(cx, cy, 90, 'fall')
+    // first entry blows the current target apart as a payoff
+    if (!wasActive) this.manager.current.detachAll(cx, cy, 90, 'fall')
+  }
+
+  /** Rainbow border + tint while FEVER is active. */
+  private drawFever(ctx: CanvasRenderingContext2D): void {
+    const w = this.renderer.width
+    const h = this.renderer.height
+    const hue = (this.feverHue * 90) % 360
+    const fade = Math.min(1, this.feverTimer) // fade border out in the last second
+    ctx.save()
+    const rg = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.32, w / 2, h / 2, Math.max(w, h) * 0.72)
+    rg.addColorStop(0, 'rgba(0,0,0,0)')
+    rg.addColorStop(1, `hsla(${hue}, 100%, 55%, ${0.14 * fade})`)
+    ctx.fillStyle = rg
+    ctx.fillRect(0, 0, w, h)
+    ctx.globalAlpha = 0.85 * fade
+    ctx.strokeStyle = `hsl(${hue}, 100%, 60%)`
+    ctx.lineWidth = 12
+    ctx.strokeRect(6, 6, w - 12, h - 12)
+    ctx.restore()
   }
 
   /** Big satisfying flourish when a target is fully destroyed. */
@@ -304,6 +334,16 @@ export class Game {
       }
     }
 
+    // FEVER mode countdown
+    if (this.feverActive) {
+      this.feverHue += realDt
+      this.feverTimer -= realDt
+      if (this.feverTimer <= 0) {
+        this.feverActive = false
+        this.hud.setFever(false)
+      }
+    }
+
     // timers run on real time (unaffected by hit-stop)
     if (this.cinematicCooldown > 0) this.cinematicCooldown = Math.max(0, this.cinematicCooldown - realDt)
     if (this.comboTimer > 0) {
@@ -330,6 +370,7 @@ export class Game {
     this.effects.drawAbove(ctx)
     this.camera.end(ctx)
     this.camera.overlay(ctx, this.renderer.width, this.renderer.height)
+    if (this.feverActive) this.drawFever(ctx)
   }
 
   private onToggleSound = (): void => {

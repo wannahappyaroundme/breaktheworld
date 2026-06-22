@@ -13,6 +13,7 @@ export class Hud {
   private bestEl!: HTMLSpanElement
   private soundBtn: HTMLButtonElement
   private parent: HTMLElement
+  private feverBanner!: HTMLDivElement
 
   constructor(parent: HTMLElement, cb: HudCallbacks) {
     this.parent = parent
@@ -36,6 +37,15 @@ export class Hud {
 
     top.append(this.comboBox, buttons)
     parent.appendChild(top)
+
+    this.feverBanner = document.createElement('div')
+    this.feverBanner.className = 'fever-banner'
+    this.feverBanner.textContent = '🌈 FEVER! 🌈'
+    parent.appendChild(this.feverBanner)
+  }
+
+  setFever(on: boolean): void {
+    this.feverBanner.classList.toggle('on', on)
   }
 
   setCombo(n: number): void {
