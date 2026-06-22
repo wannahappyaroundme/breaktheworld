@@ -53,8 +53,6 @@ export class Game {
   private totalTargets = 0
   private hitStop = 0
   private spawnCount = 0
-  private attract = false
-  private attractTimer = 0
   private feverActive = false
   private feverTimer = 0
   private feverHue = 0
@@ -96,9 +94,6 @@ export class Game {
     this.bar.select(this.weapon.id)
     this.hintEl = document.getElementById('tap-hint')
     if (!location.search.includes('nonews')) this.whatsNew.maybeShowOnLoad()
-    // attract intro: auto-smash until the user taps in
-    this.attract = true
-    this.attractTimer = 1.0
 
     new Input(canvas, (hit) => this.onHit(hit))
     window.addEventListener('resize', () =>
@@ -159,22 +154,8 @@ export class Game {
     }
   }
 
-  private autoFire(): void {
-    const t = this.manager.current
-    const x = t.cx + (Math.random() - 0.5) * t.radius * 1.1
-    const y = t.cy + (Math.random() - 0.5) * t.radius * 1.1
-    this.weapon.apply(this.world(), x, y)
-  }
-
   private onHit(hit: PointerHit): void {
     this.audio.unlock()
-    // first real tap takes over from the attract demo (don't keep its combo)
-    if (this.attract) {
-      this.attract = false
-      this.combo = 0
-      this.recordActive = false
-      this.hud.setCombo(0)
-    }
     if (!this.hintHidden) {
       this.hintHidden = true
       this.hintEl?.classList.add('hidden')
@@ -227,8 +208,8 @@ export class Game {
   private handleSpawn(t: Target): void {
     this.audio.play('whoosh')
     this.spawnCount++
-    // occasional golden bonus target (never the first, never during attract)
-    if (!this.attract && this.spawnCount > 1 && Math.random() < GOLDEN_CHANCE) {
+    // occasional golden bonus target (never the first)
+    if (this.spawnCount > 1 && Math.random() < GOLDEN_CHANCE) {
       t.setGolden(true)
       this.hud.toast('✨ 황금 타겟 등장! 부수면 보너스')
     }
@@ -308,7 +289,6 @@ export class Game {
       for (let i = 0; i < 5; i++) this.addCombo()
     }
 
-    if (this.attract) return // auto-play doesn't count toward stats
     // cumulative milestone (loss-aversion retention)
     this.totalTargets++
     localStorage.setItem(STATS_KEY, String(this.totalTargets))
@@ -324,15 +304,6 @@ export class Game {
     const scale = this.hitStop > 0 ? 0.15 : 1
     const dt = realDt * scale
     const worldDtMs = dtMs * scale
-
-    // attract demo auto-fires until the player taps in
-    if (this.attract) {
-      this.attractTimer -= realDt
-      if (this.attractTimer <= 0) {
-        this.attractTimer = 0.5
-        this.autoFire()
-      }
-    }
 
     // FEVER mode countdown
     if (this.feverActive) {
