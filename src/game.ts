@@ -16,6 +16,7 @@ import type { Target } from './targets/target'
 import { glassBits, confetti, smoke } from './weapons/fx'
 import { Hud } from './ui/hud'
 import { WhatsNew } from './ui/whatsnew'
+import { shareCard } from './ui/sharecard'
 import { WeaponBar } from './weapons/bar'
 
 const COMBO_RESET_SEC = 1.6
@@ -30,6 +31,8 @@ const GRADES: { n: number; label: string }[] = [
   { n: 100, label: '🌌 OMG 100' },
 ]
 const MILESTONES = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000]
+const GOLDEN_CHANCE = 0.18
+const FEVER_AT = [30, 60, 100, 150, 200]
 
 export class Game {
   private renderer: Renderer
@@ -48,6 +51,9 @@ export class Game {
   private recordActive = false
   private totalTargets = 0
   private hitStop = 0
+  private spawnCount = 0
+  private attract = false
+  private attractTimer = 0
   private cinematicCooldown = 0
   private hintHidden = false
   private hintEl: HTMLElement | null
@@ -64,7 +70,7 @@ export class Game {
         factories: [createWord, createEarth, createCity],
         swapDelaySec: 0.8,
         onDestroyed: (t) => this.celebrate(t),
-        onSpawn: () => this.audio.play('whoosh'),
+        onSpawn: (t) => this.handleSpawn(t),
       },
       this.renderer.width,
       this.renderer.height
@@ -79,12 +85,16 @@ export class Game {
       onReset: this.onReset,
       onNext: this.onNext,
       onWhatsNew: () => this.whatsNew.open(),
+      onShare: this.onShare,
     })
     this.hud.setBest(this.best)
     this.bar = new WeaponBar(uiRoot, weapons, (w) => this.selectWeapon(w))
     this.bar.select(this.weapon.id)
     this.hintEl = document.getElementById('tap-hint')
-    this.whatsNew.maybeShowOnLoad()
+    if (!location.search.includes('nonews')) this.whatsNew.maybeShowOnLoad()
+    // attract intro: auto-smash until the user taps in
+    this.attract = true
+    this.attractTimer = 1.0
 
     new Input(canvas, (hit) => this.onHit(hit))
     window.addEventListener('resize', () =>
@@ -144,8 +154,22 @@ export class Game {
     }
   }
 
+  private autoFire(): void {
+    const t = this.manager.current
+    const x = t.cx + (Math.random() - 0.5) * t.radius * 1.1
+    const y = t.cy + (Math.random() - 0.5) * t.radius * 1.1
+    this.weapon.apply(this.world(), x, y)
+  }
+
   private onHit(hit: PointerHit): void {
     this.audio.unlock()
+    // first real tap takes over from the attract demo (don't keep its combo)
+    if (this.attract) {
+      this.attract = false
+      this.combo = 0
+      this.recordActive = false
+      this.hud.setCombo(0)
+    }
     if (!this.hintHidden) {
       this.hintHidden = true
       this.hintEl?.classList.add('hidden')
@@ -176,6 +200,8 @@ export class Game {
       this.camera.shake(10)
       this.haptic([18, 20, 18])
     }
+    // FEVER burst at combo peaks
+    if (FEVER_AT.includes(this.combo)) this.fever()
 
     if (this.combo > this.best) {
       this.best = this.combo
@@ -189,6 +215,37 @@ export class Game {
         this.camera.flash('#ffe9a8', 0.3)
       }
     }
+  }
+
+  private handleSpawn(t: Target): void {
+    this.audio.play('whoosh')
+    this.spawnCount++
+    // occasional golden bonus target (never the first, never during attract)
+    if (!this.attract && this.spawnCount > 1 && Math.random() < GOLDEN_CHANCE) {
+      t.setGolden(true)
+      this.hud.toast('✨ 황금 타겟 등장! 부수면 보너스')
+    }
+  }
+
+  /** Spectacular one-shot when the combo curve peaks. */
+  private fever(): void {
+    this.hud.popup('🌈 FEVER!!!')
+    this.camera.flash('#ff4d9d', 0.45)
+    this.camera.shake(34)
+    this.camera.punch(0.07)
+    this.haptic([60, 40, 60, 40, 120])
+    this.audio.play('bigboom')
+    this.audio.play('energy')
+    const cx = this.renderer.cx
+    const cy = this.renderer.cy
+    confetti(this.particles, cx, cy, 70)
+    this.particles.burst(cx, cy, 50, 'spark', {
+      speed: [200, 560],
+      life: [0.4, 1.0],
+      size: [2, 4],
+      colors: ['#ff4d9d', '#ffd23f', '#7fd0ff', '#7cc95a', '#b06bff'],
+    })
+    this.manager.current.detachAll(cx, cy, 90, 'fall')
   }
 
   /** Big satisfying flourish when a target is fully destroyed. */
@@ -205,8 +262,23 @@ export class Game {
     this.haptic([30, 40, 60])
     this.audio.play('glass')
     this.audio.play('bigboom')
-    this.hud.popup(`${t.name} 와장창! 💥`)
+    this.hud.popup(t.isGolden ? '💰 골든 잭팟! +5' : `${t.name} 와장창! 💥`)
 
+    if (t.isGolden) {
+      this.camera.flash('#ffd23f', 0.4)
+      this.haptic([50, 40, 50, 40, 90])
+      this.particles.burst(x, y, 44, 'shard', {
+        speed: [120, 480],
+        life: [0.8, 1.7],
+        size: [4, 8],
+        colors: ['#ffd23f', '#ffe98a', '#ffb43a', '#fff7d6'],
+        gravity: 900,
+        drag: 0.4,
+      })
+      for (let i = 0; i < 5; i++) this.addCombo()
+    }
+
+    if (this.attract) return // auto-play doesn't count toward stats
     // cumulative milestone (loss-aversion retention)
     this.totalTargets++
     localStorage.setItem(STATS_KEY, String(this.totalTargets))
@@ -222,6 +294,15 @@ export class Game {
     const scale = this.hitStop > 0 ? 0.15 : 1
     const dt = realDt * scale
     const worldDtMs = dtMs * scale
+
+    // attract demo auto-fires until the player taps in
+    if (this.attract) {
+      this.attractTimer -= realDt
+      if (this.attractTimer <= 0) {
+        this.attractTimer = 0.5
+        this.autoFire()
+      }
+    }
 
     // timers run on real time (unaffected by hit-stop)
     if (this.cinematicCooldown > 0) this.cinematicCooldown = Math.max(0, this.cinematicCooldown - realDt)
@@ -267,5 +348,14 @@ export class Game {
 
   private onNext = (): void => {
     this.manager.skip(this.renderer.width, this.renderer.height)
+  }
+
+  private onShare = (): void => {
+    this.audio.unlock()
+    this.hud.toast('📸 카드 만드는 중…')
+    void shareCard(
+      { best: this.best, total: this.totalTargets, url: location.href.split('?')[0] },
+      (m) => this.hud.toast(m)
+    )
   }
 }

@@ -1,5 +1,5 @@
 import { Rng } from '../engine/rng'
-import { dist, easeOutBounce } from '../engine/math'
+import { dist, easeOutBounce, TAU } from '../engine/math'
 import { shatter, polyCentroid, type Pt } from './shatter'
 import type { Target, DetachMode } from './target'
 
@@ -55,6 +55,9 @@ export class Breakable implements Target {
   private dropT = 0
   private dropDur = 0.62
   private dropping = false
+  // golden bonus target
+  private golden = false
+  private gt = 0
 
   constructor(opts: BreakableOptions) {
     this.name = opts.name
@@ -149,6 +152,13 @@ export class Breakable implements Target {
     this.dropY = this.dropFrom
   }
 
+  get isGolden(): boolean {
+    return this.golden
+  }
+  setGolden(on: boolean): void {
+    this.golden = on
+  }
+
   get cx(): number {
     return this.originX + this.spriteW / 2
   }
@@ -238,6 +248,7 @@ export class Breakable implements Target {
   }
 
   update(dtSec: number, _w: number, h: number): void {
+    if (this.golden) this.gt += dtSec
     if (this.dropping) {
       this.dropT += dtSec
       const p = this.dropT / this.dropDur
@@ -268,6 +279,34 @@ export class Breakable implements Target {
   }
 
   draw(ctx: CanvasRenderingContext2D): void {
+    // golden aura behind the body
+    if (this.golden && this.attached.length > 0) {
+      const cx = this.cx
+      const cy = this.cy
+      const R = this.radius
+      ctx.save()
+      if (this.dropY !== 0) ctx.translate(0, this.dropY)
+      ctx.globalCompositeOperation = 'lighter'
+      const pulse = 0.5 + 0.5 * Math.sin(this.gt * 4)
+      const g = ctx.createRadialGradient(cx, cy, R * 0.55, cx, cy, R * 1.55)
+      g.addColorStop(0, 'rgba(255,210,63,0)')
+      g.addColorStop(0.62, `rgba(255,210,63,${0.16 + 0.14 * pulse})`)
+      g.addColorStop(1, 'rgba(255,210,63,0)')
+      ctx.fillStyle = g
+      ctx.beginPath()
+      ctx.arc(cx, cy, R * 1.55, 0, TAU)
+      ctx.fill()
+      ctx.fillStyle = '#fff7d6'
+      for (let i = 0; i < 6; i++) {
+        const a = this.gt * 1.4 + (i * TAU) / 6
+        const sx = cx + Math.cos(a) * R * 1.2
+        const sy = cy + Math.sin(a) * R * 1.2
+        ctx.beginPath()
+        ctx.arc(sx, sy, 3 + 2 * pulse, 0, TAU)
+        ctx.fill()
+      }
+      ctx.restore()
+    }
     // attached body (with sky-fall offset)
     ctx.save()
     if (this.dropY !== 0) ctx.translate(0, this.dropY)

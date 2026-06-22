@@ -24,4 +24,8 @@ export interface Target {
   reposition(w: number, h: number): void
   /** play the sky-fall entrance animation */
   dropIn(): void
+
+  /** rare bonus target — glowing gold aura + jackpot on destroy */
+  readonly isGolden: boolean
+  setGolden(on: boolean): void
 }
