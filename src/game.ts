@@ -2,7 +2,7 @@ import { Renderer } from './engine/renderer'
 import { GameLoop } from './engine/loop'
 import { Input } from './engine/input'
 import type { GestureEvent } from './combat/gesture'
-import { ActionController } from './combat/action-controller'
+import { ActionController, type CancelReason } from './combat/action-controller'
 import { ChargeVisual } from './combat/charge-visual'
 import { Camera } from './engine/camera'
 import { Particles } from './engine/particles'
@@ -48,6 +48,11 @@ import type {
   RemoteConfigResult,
   RemoteQuestConfigProvider,
 } from './config/quest-provider'
+import {
+  AnalyticsClient,
+  type AnalyticsSupabaseClient,
+} from './analytics/client'
+import { GameAnalyticsBridge } from './analytics/game-bridge'
 
 const COMBO_RESET_SEC = 1.6
 const GRADES: { n: number; label: string }[] = [
@@ -96,6 +101,7 @@ export class Game {
   private demoMode = false
   private destroyAttribution = new TargetDestroyAttribution()
   private remoteConfig = new RemoteConfigOrchestrator()
+  private analytics = new GameAnalyticsBridge(false)
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.renderer = new Renderer(canvas)
@@ -135,6 +141,7 @@ export class Game {
       dayKey: kstDayKey(new Date()),
       nowIso: () => new Date().toISOString(),
       notify: (notice) => this.hud.notify(notice),
+      analytics: this.analytics,
       knownWeaponIds: KNOWN_WEAPON_IDS,
       knownMoveIds: KNOWN_MOVE_IDS,
     })
@@ -211,11 +218,14 @@ export class Game {
     this.input = new Input(canvas, (event) => this.onGesture(event), 'gesture')
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
-        this.controller.cancel('visibility')
+        this.cancelAction('visibility')
         this.applyPendingRemoteConfig()
       }
     })
-    window.addEventListener('pagehide', () => this.progress.checkpoint('pagehide'))
+    window.addEventListener('pagehide', () => {
+      this.progress.checkpoint('pagehide')
+      this.analytics.flushOnPageHide()
+    })
     window.addEventListener('resize', () =>
       this.manager.current.reposition(this.renderer.width, this.renderer.height)
     )
@@ -246,6 +256,24 @@ export class Game {
   /** Task 4 can attach its queue stop-and-clear boundary without coupling gameplay to analytics. */
   setAnalyticsDisabledHook(hook: AnalyticsDisabledHook): void {
     this.remoteConfig.setAnalyticsDisabledHook(hook)
+  }
+
+  /** Hashes the private install seed before attaching optional anonymous telemetry. */
+  async connectAnalytics(supabase: AnalyticsSupabaseClient | null): Promise<void> {
+    try {
+      const analytics = await AnalyticsClient.create({
+        installSeed: this.progress.state.installSeed,
+        supabase,
+        enabled: this.remoteConfig.active.analytics_enabled,
+        initialValidHits: this.progress.state.lifetime.validHits,
+        initialTargets: this.progress.state.lifetime.totalTargets,
+      })
+      this.analytics.attach(analytics)
+      this.setAnalyticsDisabledHook(() => this.analytics.setEnabled(false))
+      this.analytics.setEnabled(this.remoteConfig.active.analytics_enabled)
+    } catch {
+      this.analytics.setEnabled(false)
+    }
   }
 
   /** Auto-fire a weapon around the target (for screenshots/demos: ?demo or ?demo=thanos). */
@@ -283,8 +311,15 @@ export class Game {
   /** The only gameplay entry that may reduce progress or emit gameplay analytics. */
   private dispatch(events: readonly GameEvent[], reason?: CheckpointReason): void {
     const previousTotal = this.progress.state.lifetime.totalTargets
+    const previousQuestCompletedAt = this.progress.state.daily.completedAt
     const result = this.reduceProgress(events, reason)
     if (result.accepted === 0) return
+    this.analytics.trackQuestTransition(
+      previousQuestCompletedAt,
+      this.progress.state.daily.completedAt,
+      'user',
+      result.accepted > 0
+    )
     this.refreshProgressUI()
     if (
       this.progress.state.lifetime.totalTargets > previousTotal
@@ -336,14 +371,25 @@ export class Game {
     return this.remoteConfig.gamificationFor(events)
   }
 
-  private applyRemoteFlags(_flags: FeatureFlags): void {
+  private applyRemoteFlags(flags: FeatureFlags): void {
+    this.analytics.setEnabled(flags.analytics_enabled)
     this.refreshProgressUI()
   }
 
   private changeSetting(change: RecordBookSettingChange): void {
     const result = this.reduceProgress([{ type: 'SETTING_CHANGED', ...change }], 'setting')
     if (result.accepted === 0) return
-    if (change.key === 'strongInput') this.controller.setStrongInput(change.value)
+    if (change.key === 'strongInput') {
+      const wasCharging = this.controller.chargeState !== null
+      const settingChanged = change.value !== this.controller.strongInputMode
+      this.controller.setStrongInput(change.value)
+      const confirmed = GameAnalyticsBridge.confirmedChargeEnd(
+        wasCharging,
+        this.controller.chargeState !== null,
+        settingChanged
+      )
+      this.analytics.trackChargeCancellation(confirmed, this.weapon.id, this.currentSource())
+    }
     if (change.key === 'reducedMotion') this.applyMotionSetting()
     this.refreshProgressUI()
     this.applyPendingRemoteConfig()
@@ -360,7 +406,7 @@ export class Game {
   }
 
   private selectWeapon(w: Weapon): void {
-    this.controller.cancel('weaponChange')
+    this.cancelAction('weaponChange')
     this.applyPendingRemoteConfig()
     this.weapon = w
     this.bar.select(w.id)
@@ -385,8 +431,34 @@ export class Game {
       this.audio.unlock()
       this.holdHint.hideInitial()
     }
-    this.controller.handle(event, this.weapon, this.world())
+    const wasCharging = this.controller.chargeState !== null
+    const resolution = this.controller.handle(event, this.weapon, this.world())
+    const endedCharging = GameAnalyticsBridge.confirmedChargeEnd(
+      wasCharging,
+      this.controller.chargeState !== null,
+      event.type === 'cancel' || (event.type === 'chargeRelease' && resolution?.kind === 'charged')
+    )
+    if (event.type === 'chargeRelease') {
+      this.analytics.trackChargeRelease(endedCharging, this.weapon.id, this.currentSource())
+    } else if (event.type === 'cancel') {
+      this.analytics.trackChargeCancellation(endedCharging, this.weapon.id, this.currentSource())
+    }
     this.applyPendingRemoteConfig()
+  }
+
+  private currentSource(): EventSource {
+    return this.demoMode ? 'demo' : 'user'
+  }
+
+  private cancelAction(reason: CancelReason): void {
+    const wasCharging = this.controller.chargeState !== null
+    this.controller.cancel(reason)
+    const confirmed = GameAnalyticsBridge.confirmedChargeEnd(
+      wasCharging,
+      this.controller.chargeState !== null,
+      true
+    )
+    this.analytics.trackChargeCancellation(confirmed, this.weapon.id, this.currentSource())
   }
 
   private haptic(pattern: number | number[]): void {
@@ -438,7 +510,7 @@ export class Game {
   private handleDestroyed(t: Target): void {
     const targetRunId = this.manager.targetRunId
     const attributedToUser = this.destroyAttribution.consume(targetRunId)
-    this.controller.cancel('targetDestroyed')
+    this.cancelAction('targetDestroyed')
     this.applyPendingRemoteConfig()
     this.celebrate(t, attributedToUser)
   }
@@ -588,7 +660,7 @@ export class Game {
   }
 
   private onReset = (): void => {
-    this.controller.cancel('reset')
+    this.cancelAction('reset')
     this.applyPendingRemoteConfig()
     this.destroyAttribution.clear()
     this.manager.reset(this.renderer.width, this.renderer.height)
@@ -600,7 +672,7 @@ export class Game {
   }
 
   private onNext = (): void => {
-    this.controller.cancel('next')
+    this.cancelAction('next')
     this.applyPendingRemoteConfig()
     this.destroyAttribution.clear()
     this.manager.skip(this.renderer.width, this.renderer.height)

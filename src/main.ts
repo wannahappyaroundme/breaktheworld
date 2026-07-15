@@ -19,6 +19,7 @@ preloadAssets(import.meta.env.BASE_URL).finally(() => {
   } catch {
     // A malformed or blocked optional remote client must not interrupt local play.
   }
+  void game.connectAnalytics(client)
   const provider = new RemoteQuestConfigProvider({
     reader: client
       ? createSupabaseRemoteConfigReader(client)
