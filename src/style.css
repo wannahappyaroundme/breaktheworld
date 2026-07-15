@@ -207,7 +207,7 @@ body {
   left: 50%;
   top: 62%;
   transform: translateX(-50%);
-  z-index: 6;
+  z-index: 4;
   font-size: 15px;
   font-weight: 700;
   letter-spacing: 1px;

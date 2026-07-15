@@ -525,4 +525,17 @@ describe('Hud record button and live notification renderer', () => {
       /#ui\s*>\s*\.hud-notice\s*\{[^}]*pointer-events:\s*none\s*;/s
     )
   })
+
+  it('keeps the game tap hint beneath the UI modal stacking context', async () => {
+    const { readFileSync } = await vi.importActual<{
+      readFileSync(path: URL, encoding: 'utf8'): string
+    }>('node:fs')
+    const styleCss = readFileSync(new URL('../style.css', import.meta.url), 'utf8')
+    const uiLayer = /#ui\s*\{[^}]*z-index:\s*(\d+)\s*;/s.exec(styleCss)
+    const hintLayer = /#tap-hint\s*\{[^}]*z-index:\s*(\d+)\s*;/s.exec(styleCss)
+
+    expect(uiLayer).not.toBeNull()
+    expect(hintLayer).not.toBeNull()
+    expect(Number(hintLayer?.[1])).toBeLessThan(Number(uiLayer?.[1]))
+  })
 })
