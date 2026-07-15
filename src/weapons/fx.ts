@@ -2,6 +2,11 @@ import type { Particles } from '../engine/particles'
 
 /** Shared particle bursts used to garnish weapon impacts. */
 
+/** Keeps charged particle accents proportional without overrunning the pool. */
+export function scaledCount(base: number, scale: number, max = 64): number {
+  return Math.min(max, Math.max(1, Math.round(base * scale)))
+}
+
 export function debris(p: Particles, x: number, y: number, n: number, colors: string[]): void {
   p.burst(x, y, n, 'shard', {
     speed: [120, 460],

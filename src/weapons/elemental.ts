@@ -1,5 +1,5 @@
-import type { Weapon } from './weapon'
-import * as fx from './fx'
+import { clamp } from '../engine/math'
+import { Rng } from '../engine/rng'
 import {
   explosion,
   shockwave,
@@ -12,269 +12,478 @@ import {
   frostRing,
   tornado,
 } from '../effects/primitives'
-import { rng } from '../engine/rng'
+import type { DamagePattern, DamageResult } from '../combat/damage'
+import { ELEMENTAL_CHARGE, type ElementalWeaponId } from './charge-profiles'
+import type { Weapon, WeaponAction, World } from './weapon'
+import * as fx from './fx'
 
 const EARTH = ['#7cc95a', '#4aa6e0', '#b07b4f', '#5fab3c', '#3b89c4']
 
-const hammer: Weapon = {
-  id: 'hammer',
-  name: '망치',
-  icon: '🔨',
-  mode: 'point',
-  apply(w, x, y) {
-    w.target.takeDamage(x, y, 72, 55)
-    w.effects.add(crack(x, y, { branches: 6, len: 96 }))
-    w.effects.add(speedLines(x, y, { count: 8, r0: 8, r1: 80 }))
-    fx.debris(w.particles, x, y, 14, EARTH)
-    fx.dust(w.particles, x, y, 8)
-    w.camera.shake(11)
-    w.camera.punch(0.02)
-    w.audio.play('thud')
-  },
+type AttackKind = 'quick' | 'drag' | 'charged'
+type RatioRange = readonly [min: number, max: number]
+
+const LOCAL_DAMAGE: Record<
+  ElementalWeaponId,
+  { quick: RatioRange; drag: RatioRange }
+> = {
+  hammer: { quick: [0.2, 0.27], drag: [0.07, 0.11] },
+  fist: { quick: [0.24, 0.32], drag: [0.09, 0.14] },
+  glass: { quick: [0.2, 0.25], drag: [0.06, 0.1] },
+  laser: { quick: [0.2, 0.25], drag: [0.08, 0.12] },
+  meteor: { quick: [0.24, 0.34], drag: [0.08, 0.13] },
+  missile: { quick: [0.22, 0.32], drag: [0.07, 0.12] },
+  bomb: { quick: [0.25, 0.35], drag: [0.09, 0.15] },
+  lightning: { quick: [0.22, 0.3], drag: [0.08, 0.13] },
+  flame: { quick: [0.2, 0.24], drag: [0.06, 0.1] },
+  tornado: { quick: [0.22, 0.29], drag: [0.08, 0.12] },
+  freeze: { quick: [0.21, 0.28], drag: [0.07, 0.11] },
+  blackhole: { quick: [0.24, 0.34], drag: [0.09, 0.14] },
 }
 
-const fist: Weapon = {
-  id: 'fist',
-  name: '주먹',
-  icon: '👊',
-  mode: 'point',
-  apply(w, x, y) {
-    w.target.takeDamage(x, y, 104, 72)
-    w.effects.add(shockwave(x, y, 130, { color: '#ffffff', width: 12 }))
-    w.effects.add(crack(x, y, { branches: 8, len: 120 }))
-    w.effects.add(speedLines(x, y, { count: 12, r0: 14, r1: 120 }))
-    fx.debris(w.particles, x, y, 22, EARTH)
-    fx.dust(w.particles, x, y, 12)
-    w.camera.shake(17)
-    w.camera.punch(0.035)
-    w.audio.play('thud')
-  },
+function chargeAmount(action: WeaponAction): number {
+  return clamp(action.charge, 0, 1)
 }
 
-const glass: Weapon = {
-  id: 'glass',
-  name: '유리',
-  icon: '🧊',
-  mode: 'point',
-  apply(w, x, y) {
-    w.target.takeDamage(x, y, 62, 48)
-    w.effects.add(crack(x, y, { branches: 7, len: 80, color: '#bfe6ff', dur: 0.6 }))
-    fx.glassBits(w.particles, x, y, 18)
-    fx.sparks(w.particles, x, y, 6, ['#ffffff', '#dff3ff'])
-    w.camera.shake(7)
-    w.audio.play('glass')
-  },
+function visualScale(id: ElementalWeaponId, kind: AttackKind, action: WeaponAction): number {
+  if (kind === 'drag') return 0.72
+  if (kind === 'quick') return 1
+  return 1 + (ELEMENTAL_CHARGE[id].maxRadiusScale - 1) * chargeAmount(action)
 }
 
-const laser: Weapon = {
-  id: 'laser',
-  name: '레이저',
-  icon: '🔪',
-  mode: 'point',
-  apply(w, x, y) {
-    w.effects.add(beam(x, 0, x, y, { color: '#ff4d6d', core: '#ffffff', width: 14, dur: 0.28 }))
-    w.target.takeDamage(x, y, 50, 44)
-    fx.sparks(w.particles, x, y, 14, ['#ff4d6d', '#ffd23f', '#ffffff'])
-    fx.fireBits(w.particles, x, y, 6)
-    w.camera.shake(6)
-    w.camera.flash('#ff4d6d', 0.12)
-    w.audio.play('zap')
-  },
+function particleScale(
+  id: ElementalWeaponId,
+  kind: AttackKind,
+  action: WeaponAction
+): number {
+  if (kind === 'drag') return 0.55
+  if (kind === 'quick') return 1
+  return visualScale(id, kind, action)
 }
 
-const meteor: Weapon = {
-  id: 'meteor',
-  name: '운석',
-  icon: '☄️',
-  mode: 'point',
-  apply(w, x, y) {
-    const sx = x + rng.spread(120)
-    w.effects.add(
-      projectile(sx, -90, x, y, {
-        dur: 0.42,
-        color: '#ffae3b',
-        headR: 16,
-        onImpact: () => {
-          w.target.takeDamage(x, y, 118, 85)
-          w.effects.add(explosion(x, y, 170))
-          w.effects.add(shockwave(x, y, 200, { color: '#ffcaa0', width: 14 }))
-          fx.debris(w.particles, x, y, 28, EARTH)
-          fx.fireBits(w.particles, x, y, 20)
-          fx.smoke(w.particles, x, y, 10)
-          fx.dust(w.particles, x, y, 14)
-          w.camera.shake(26)
-          w.camera.punch(0.05)
-          w.camera.flash('#ffd9a0', 0.3)
-          w.audio.play('bigboom')
-        },
-      })
+function damageRatios(
+  id: ElementalWeaponId,
+  kind: AttackKind,
+  action: WeaponAction
+): { min: number; max: number } {
+  if (kind !== 'charged') {
+    const [min, max] = LOCAL_DAMAGE[id][kind]
+    return { min, max }
+  }
+
+  const quickMax = LOCAL_DAMAGE[id].quick[1]
+  const max = quickMax + (ELEMENTAL_CHARGE[id].maxDamageRatio - quickMax) * chargeAmount(action)
+  return { min: max * 0.82, max }
+}
+
+function checkedDamage(
+  world: World,
+  action: WeaponAction,
+  pattern: DamagePattern,
+  ratios: { min: number; max: number },
+  force: number,
+  mode: 'fall' | 'dissolve' | 'squash'
+): DamageResult | null {
+  let max = ratios.max
+  let min = ratios.min
+  const initial = world.target.initialFragmentCount
+  if (initial >= 2 && world.target.attachedCount === initial) {
+    max = Math.min(max, (initial - 1) / initial)
+    min = Math.min(min, max)
+  }
+
+  return action.damage({
+    pattern,
+    minRatio: min,
+    maxRatio: max,
+    force,
+    mode,
+    finish: false,
+  })
+}
+
+function seedForLegacy(id: string, x: number, y: number, fragments: number): number {
+  let seed = 0x811c9dc5
+  for (let i = 0; i < id.length; i++) seed = Math.imul(seed ^ id.charCodeAt(i), 0x01000193)
+  seed = Math.imul(seed ^ Math.round(x), 0x01000193)
+  seed = Math.imul(seed ^ Math.round(y), 0x01000193)
+  return (seed ^ fragments) >>> 0
+}
+
+function legacyAction(id: string, world: World, x: number, y: number): WeaponAction {
+  const seed = seedForLegacy(id, x, y, world.target.attachedCount)
+  return {
+    actionId: 0,
+    targetRunId: 0,
+    x,
+    y,
+    charge: 0,
+    seed,
+    damage: (request) => world.target.applyDamage({ ...request, seed }),
+  }
+}
+
+function addProjectile(world: World, effect: ReturnType<typeof projectile>, onSkipped: () => void): void {
+  if (!world.effects.add(effect)) onSkipped()
+}
+
+function attackHammer(world: World, action: WeaponAction, kind: AttackKind): void {
+  const scale = visualScale('hammer', kind, action)
+  const particles = particleScale('hammer', kind, action)
+  checkedDamage(
+    world,
+    action,
+    { kind: 'circle', x: action.x, y: action.y, radius: 72 * scale },
+    damageRatios('hammer', kind, action),
+    55 + 28 * chargeAmount(action),
+    'fall'
+  )
+  world.effects.add(crack(action.x, action.y, { branches: fx.scaledCount(6, scale, 10), len: 96 * scale }))
+  world.effects.add(speedLines(action.x, action.y, { count: fx.scaledCount(8, scale, 14), r0: 8, r1: 80 * scale }))
+  fx.debris(world.particles, action.x, action.y, fx.scaledCount(14, particles), EARTH)
+  fx.dust(world.particles, action.x, action.y, fx.scaledCount(8, particles))
+  world.camera.shake(kind === 'drag' ? 5 : 11 * scale)
+  world.camera.punch(kind === 'charged' ? 0.035 : 0.02)
+  world.audio.play('thud')
+}
+
+function attackFist(world: World, action: WeaponAction, kind: AttackKind): void {
+  const scale = visualScale('fist', kind, action)
+  const particles = particleScale('fist', kind, action)
+  checkedDamage(
+    world,
+    action,
+    { kind: 'ellipse', x: action.x, y: action.y, rx: 104 * scale, ry: 72 * scale, rotation: -0.18 },
+    damageRatios('fist', kind, action),
+    72 + 30 * chargeAmount(action),
+    'squash'
+  )
+  world.effects.add(shockwave(action.x, action.y, 130 * scale, { color: '#ffffff', width: 12 * scale }))
+  world.effects.add(crack(action.x, action.y, { branches: fx.scaledCount(8, scale, 12), len: 120 * scale }))
+  world.effects.add(speedLines(action.x, action.y, { count: fx.scaledCount(12, scale, 18), r0: 14, r1: 120 * scale }))
+  fx.debris(world.particles, action.x, action.y, fx.scaledCount(22, particles), EARTH)
+  fx.dust(world.particles, action.x, action.y, fx.scaledCount(12, particles))
+  world.camera.shake(kind === 'drag' ? 7 : 17 * scale)
+  world.camera.punch(kind === 'charged' ? 0.05 : 0.035)
+  world.audio.play('thud')
+}
+
+function attackGlass(world: World, action: WeaponAction, kind: AttackKind): void {
+  const scale = visualScale('glass', kind, action)
+  const particles = particleScale('glass', kind, action)
+  const patternRng = new Rng(action.seed ^ 0x61a55)
+  const points = Array.from({ length: kind === 'charged' ? 4 : 2 }, () => ({
+    x: action.x + patternRng.spread(34 * scale),
+    y: action.y + patternRng.spread(28 * scale),
+  }))
+  checkedDamage(
+    world,
+    action,
+    { kind: 'multi', points, radius: 36 * scale },
+    damageRatios('glass', kind, action),
+    48 + 18 * chargeAmount(action),
+    'fall'
+  )
+  world.effects.add(crack(action.x, action.y, { branches: fx.scaledCount(7, scale, 12), len: 80 * scale, color: '#bfe6ff', dur: 0.6 }))
+  fx.glassBits(world.particles, action.x, action.y, fx.scaledCount(18, particles))
+  fx.sparks(world.particles, action.x, action.y, fx.scaledCount(6, particles), ['#ffffff', '#dff3ff'])
+  world.camera.shake(kind === 'drag' ? 4 : 7 * scale)
+  world.audio.play('glass')
+}
+
+function attackLaser(world: World, action: WeaponAction, kind: AttackKind): void {
+  const scale = visualScale('laser', kind, action)
+  const particles = particleScale('laser', kind, action)
+  world.effects.add(beam(action.x, 0, action.x, action.y, { color: '#ff4d6d', core: '#ffffff', width: 14 * scale, dur: 0.28 + chargeAmount(action) * 0.12 }))
+  checkedDamage(
+    world,
+    action,
+    { kind: 'line', x1: action.x, y1: action.y - 150 * scale, x2: action.x, y2: action.y + 42 * scale, width: 50 * scale },
+    damageRatios('laser', kind, action),
+    44 + 24 * chargeAmount(action),
+    'dissolve'
+  )
+  fx.sparks(world.particles, action.x, action.y, fx.scaledCount(14, particles), ['#ff4d6d', '#ffd23f', '#ffffff'])
+  fx.fireBits(world.particles, action.x, action.y, fx.scaledCount(6, particles))
+  world.camera.shake(kind === 'drag' ? 3 : 6 * scale)
+  world.camera.flash('#ff4d6d', kind === 'charged' ? 0.22 : 0.12)
+  world.audio.play('zap')
+}
+
+function attackMeteor(world: World, action: WeaponAction, kind: AttackKind): void {
+  const scale = visualScale('meteor', kind, action)
+  const particles = particleScale('meteor', kind, action)
+  const visualRng = new Rng(action.seed ^ 0x4d371e)
+  const startX = action.x + visualRng.spread(120 * scale)
+  const ratios = damageRatios('meteor', kind, action)
+  const impact = () => {
+    checkedDamage(
+      world,
+      action,
+      { kind: 'circle', x: action.x, y: action.y, radius: 118 * scale },
+      ratios,
+      85 + 30 * chargeAmount(action),
+      'fall'
     )
-    w.audio.play('whoosh')
-  },
+    world.effects.add(explosion(action.x, action.y, 170 * scale))
+    world.effects.add(shockwave(action.x, action.y, 200 * scale, { color: '#ffcaa0', width: 14 * scale }))
+    fx.debris(world.particles, action.x, action.y, fx.scaledCount(28, particles), EARTH)
+    fx.fireBits(world.particles, action.x, action.y, fx.scaledCount(20, particles))
+    fx.smoke(world.particles, action.x, action.y, fx.scaledCount(10, particles))
+    fx.dust(world.particles, action.x, action.y, fx.scaledCount(14, particles))
+    world.camera.shake(kind === 'drag' ? 9 : 26 * scale)
+    world.camera.punch(kind === 'charged' ? 0.07 : 0.05)
+    world.camera.flash('#ffd9a0', kind === 'charged' ? 0.4 : 0.3)
+    world.audio.play(kind === 'charged' ? 'bigboom' : 'boom')
+  }
+  if (kind === 'drag') {
+    impact()
+    return
+  }
+  addProjectile(
+    world,
+    projectile(startX, -90, action.x, action.y, {
+      dur: Math.max(0.24, 0.42 - chargeAmount(action) * 0.08),
+      color: '#ffae3b',
+      headR: 16 * scale,
+      onImpact: impact,
+    }),
+    impact
+  )
+  world.audio.play('whoosh')
 }
 
-const missile: Weapon = {
-  id: 'missile',
-  name: '미사일',
-  icon: '🚀',
-  mode: 'point',
-  apply(w, x, y) {
-    const n = 4
-    for (let i = 0; i < n; i++) {
-      const tx = x + rng.spread(90)
-      const ty = y + rng.spread(60)
-      w.effects.add(
-        projectile(tx + rng.spread(40), -100 - i * 30, tx, ty, {
-          dur: 0.4 + i * 0.08,
-          color: '#ff5a3c',
-          headR: 9,
-          onImpact: () => {
-            w.target.takeDamage(tx, ty, 70, 60)
-            w.effects.add(explosion(tx, ty, 90))
-            fx.debris(w.particles, tx, ty, 12, EARTH)
-            fx.fireBits(w.particles, tx, ty, 10)
-            fx.smoke(w.particles, tx, ty, 5)
-            w.camera.shake(14)
-            w.audio.play('boom')
-          },
-        })
+function attackMissile(world: World, action: WeaponAction, kind: AttackKind): void {
+  const scale = visualScale('missile', kind, action)
+  const particles = particleScale('missile', kind, action)
+  const visualRng = new Rng(action.seed ^ 0x115511e)
+  const desired = kind === 'drag' ? 1 : kind === 'quick' ? 2 : 4
+  const count = Math.min(desired, Math.max(1, world.target.attachedCount - 1))
+  const totalRatios = damageRatios('missile', kind, action)
+
+  for (let i = 0; i < count; i++) {
+    const targetX = action.x + visualRng.spread(90 * scale)
+    const targetY = action.y + visualRng.spread(60 * scale)
+    const perImpact = { min: totalRatios.min / count, max: totalRatios.max / count }
+    const impact = () => {
+      checkedDamage(
+        world,
+        action,
+        { kind: 'circle', x: targetX, y: targetY, radius: 70 * scale },
+        perImpact,
+        60 + 24 * chargeAmount(action),
+        'fall'
       )
+      world.effects.add(explosion(targetX, targetY, 90 * scale))
+      fx.debris(world.particles, targetX, targetY, fx.scaledCount(12, particles), EARTH)
+      fx.fireBits(world.particles, targetX, targetY, fx.scaledCount(10, particles))
+      fx.smoke(world.particles, targetX, targetY, fx.scaledCount(5, particles))
+      world.camera.shake(kind === 'drag' ? 5 : 14 * scale)
+      world.audio.play('boom')
     }
-    w.audio.play('whoosh')
-  },
-}
-
-const bomb: Weapon = {
-  id: 'bomb',
-  name: '대폭발',
-  icon: '💣',
-  mode: 'point',
-  apply(w, x, y) {
-    w.target.takeDamage(x, y, 150, 95)
-    w.effects.add(explosion(x, y, 210, { dur: 0.6 }))
-    w.effects.add(shockwave(x, y, 240, { color: '#ffd9a0', width: 16 }))
-    fx.debris(w.particles, x, y, 34, EARTH)
-    fx.fireBits(w.particles, x, y, 26)
-    fx.smoke(w.particles, x, y, 14)
-    fx.dust(w.particles, x, y, 16)
-    w.camera.shake(30)
-    w.camera.punch(0.06)
-    w.camera.flash('#fff1c0', 0.4)
-    w.audio.play('bigboom')
-  },
-}
-
-const lightningBolt: Weapon = {
-  id: 'lightning',
-  name: '번개',
-  icon: '⚡',
-  mode: 'point',
-  apply(w, x, y) {
-    w.effects.add(lightning(x, 0, x, y, { dur: 0.28 }))
-    w.target.takeDamage(x, y, 84, 70)
-    w.effects.add(crack(x, y, { branches: 5, len: 80, color: '#bfe3ff', dur: 0.5 }))
-    fx.sparks(w.particles, x, y, 20, ['#bfe3ff', '#ffffff', '#9fd0ff'])
-    fx.debris(w.particles, x, y, 12, EARTH)
-    w.camera.shake(16)
-    w.camera.flash('#dff0ff', 0.35)
-    w.audio.play('zap')
-  },
-}
-
-const flame: Weapon = {
-  id: 'flame',
-  name: '화염',
-  icon: '🔥',
-  mode: 'point',
-  apply(w, x, y) {
-    w.target.takeDamage(x, y, 56, 36)
-    fx.fireBits(w.particles, x, y, 16)
-    fx.ash(w.particles, x, y, 8)
-    fx.smoke(w.particles, x, y, 6)
-    w.effects.add(explosion(x, y, 70, { dur: 0.3, hot: '#ffd23f', cool: '#ff4d2f' }))
-    w.camera.shake(5)
-    w.audio.play('sizzle')
-  },
-}
-
-const tornadoWeapon: Weapon = {
-  id: 'tornado',
-  name: '토네이도',
-  icon: '🌪️',
-  mode: 'point',
-  apply(w, x, y) {
-    const top = Math.max(40, y - 220)
-    w.effects.add(tornado(x, top, y + 80, { dur: 1.1 }))
-    // tear off a vertical band of fragments
-    w.target.takeDamage(x, w.target.cy, 130, 55)
-    fx.dust(w.particles, x, y, 18)
-    fx.debris(w.particles, x, y, 16, EARTH)
-    w.camera.shake(12)
-    w.audio.play('whoosh')
-  },
-}
-
-const freeze: Weapon = {
-  id: 'freeze',
-  name: '빙결',
-  icon: '❄️',
-  mode: 'point',
-  apply(w, x, y) {
-    w.effects.add(frostRing(x, y, 110))
-    w.target.takeDamage(x, y, 92, 62)
-    fx.glassBits(w.particles, x, y, 16)
-    fx.sparks(w.particles, x, y, 8, ['#cdebff', '#ffffff', '#eaf7ff'])
-    w.camera.shake(9)
-    w.camera.flash('#dff2ff', 0.18)
-    w.audio.play('freeze')
-    w.audio.play('glass')
-  },
-}
-
-const blackHole: Weapon = {
-  id: 'blackhole',
-  name: '블랙홀',
-  icon: '🕳️',
-  mode: 'cinematic',
-  apply(w, x, y) {
-    w.effects.add(blackhole(x, y, 180, { dur: 1.5 }))
-    w.target.detachAll(x, y, 8, 'dissolve')
-    // particles spiral inward
-    for (let i = 0; i < 70; i++) {
-      const a = rng.angle()
-      const d = rng.range(120, 340)
-      const px = x + Math.cos(a) * d
-      const py = y + Math.sin(a) * d
-      const sp = rng.range(160, 380)
-      w.particles.spawn({
-        x: px,
-        y: py,
-        vx: -Math.cos(a) * sp,
-        vy: -Math.sin(a) * sp,
-        life: d / sp,
-        size: rng.range(1.5, 3.5),
-        color: rng.pick(['#b06bff', '#7fd0ff', '#ffffff', '#c9a3e8']),
-        kind: 'spark',
-        drag: 0.2,
-      })
+    if (kind === 'drag') {
+      impact()
+      continue
     }
-    w.camera.shake(10)
-    w.audio.play('whoosh')
-    w.audio.play('boom')
-  },
+    addProjectile(
+      world,
+      projectile(targetX + visualRng.spread(40), -100 - i * 30, targetX, targetY, {
+        dur: 0.38 + i * 0.07,
+        color: '#ff5a3c',
+        headR: 9 * scale,
+        onImpact: impact,
+      }),
+      impact
+    )
+  }
+  world.audio.play('whoosh')
+}
+
+function attackBomb(world: World, action: WeaponAction, kind: AttackKind): void {
+  const scale = visualScale('bomb', kind, action)
+  const particles = particleScale('bomb', kind, action)
+  checkedDamage(
+    world,
+    action,
+    { kind: 'circle', x: action.x, y: action.y, radius: 150 * scale },
+    damageRatios('bomb', kind, action),
+    95 + 38 * chargeAmount(action),
+    'fall'
+  )
+  world.effects.add(explosion(action.x, action.y, 210 * scale, { dur: 0.6 }))
+  world.effects.add(shockwave(action.x, action.y, 240 * scale, { color: '#ffd9a0', width: 16 * scale }))
+  fx.debris(world.particles, action.x, action.y, fx.scaledCount(34, particles), EARTH)
+  fx.fireBits(world.particles, action.x, action.y, fx.scaledCount(26, particles))
+  fx.smoke(world.particles, action.x, action.y, fx.scaledCount(14, particles))
+  fx.dust(world.particles, action.x, action.y, fx.scaledCount(16, particles))
+  world.camera.shake(kind === 'drag' ? 10 : 30 * scale)
+  world.camera.punch(kind === 'charged' ? 0.08 : 0.06)
+  world.camera.flash('#fff1c0', kind === 'charged' ? 0.5 : 0.4)
+  world.audio.play('bigboom')
+}
+
+function attackLightning(world: World, action: WeaponAction, kind: AttackKind): void {
+  const scale = visualScale('lightning', kind, action)
+  const particles = particleScale('lightning', kind, action)
+  world.effects.add(lightning(action.x, 0, action.x, action.y, { dur: 0.28 + chargeAmount(action) * 0.1 }))
+  checkedDamage(
+    world,
+    action,
+    { kind: 'line', x1: action.x, y1: action.y - 170 * scale, x2: action.x, y2: action.y + 55 * scale, width: 84 * scale },
+    damageRatios('lightning', kind, action),
+    70 + 28 * chargeAmount(action),
+    'dissolve'
+  )
+  world.effects.add(crack(action.x, action.y, { branches: fx.scaledCount(5, scale, 9), len: 80 * scale, color: '#bfe3ff', dur: 0.5 }))
+  fx.sparks(world.particles, action.x, action.y, fx.scaledCount(20, particles), ['#bfe3ff', '#ffffff', '#9fd0ff'])
+  fx.debris(world.particles, action.x, action.y, fx.scaledCount(12, particles), EARTH)
+  world.camera.shake(kind === 'drag' ? 6 : 16 * scale)
+  world.camera.flash('#dff0ff', kind === 'charged' ? 0.45 : 0.35)
+  world.audio.play('zap')
+}
+
+function attackFlame(world: World, action: WeaponAction, kind: AttackKind): void {
+  const scale = visualScale('flame', kind, action)
+  const particles = particleScale('flame', kind, action)
+  checkedDamage(
+    world,
+    action,
+    { kind: 'circle', x: action.x, y: action.y, radius: 56 * scale },
+    damageRatios('flame', kind, action),
+    36 + 20 * chargeAmount(action),
+    'dissolve'
+  )
+  fx.fireBits(world.particles, action.x, action.y, fx.scaledCount(16, particles))
+  fx.ash(world.particles, action.x, action.y, fx.scaledCount(8, particles))
+  fx.smoke(world.particles, action.x, action.y, fx.scaledCount(6, particles))
+  world.effects.add(explosion(action.x, action.y, 70 * scale, { dur: 0.3, hot: '#ffd23f', cool: '#ff4d2f' }))
+  world.camera.shake(kind === 'drag' ? 3 : 5 * scale)
+  world.audio.play('sizzle')
+}
+
+function attackTornado(world: World, action: WeaponAction, kind: AttackKind): void {
+  const scale = visualScale('tornado', kind, action)
+  const particles = particleScale('tornado', kind, action)
+  const top = Math.max(40, action.y - 220 * scale)
+  world.effects.add(tornado(action.x, top, action.y + 80 * scale, { dur: 1.1 }))
+  checkedDamage(
+    world,
+    action,
+    { kind: 'ellipse', x: action.x, y: world.target.cy, rx: 65 * scale, ry: 170 * scale, rotation: 0 },
+    damageRatios('tornado', kind, action),
+    55 + 28 * chargeAmount(action),
+    'fall'
+  )
+  fx.dust(world.particles, action.x, action.y, fx.scaledCount(18, particles))
+  fx.debris(world.particles, action.x, action.y, fx.scaledCount(16, particles), EARTH)
+  world.camera.shake(kind === 'drag' ? 5 : 12 * scale)
+  world.audio.play('whoosh')
+}
+
+function attackFreeze(world: World, action: WeaponAction, kind: AttackKind): void {
+  const scale = visualScale('freeze', kind, action)
+  const particles = particleScale('freeze', kind, action)
+  world.effects.add(frostRing(action.x, action.y, 110 * scale))
+  checkedDamage(
+    world,
+    action,
+    { kind: 'circle', x: action.x, y: action.y, radius: 92 * scale },
+    damageRatios('freeze', kind, action),
+    62 + 22 * chargeAmount(action),
+    'dissolve'
+  )
+  fx.glassBits(world.particles, action.x, action.y, fx.scaledCount(16, particles))
+  fx.sparks(world.particles, action.x, action.y, fx.scaledCount(8, particles), ['#cdebff', '#ffffff', '#eaf7ff'])
+  world.camera.shake(kind === 'drag' ? 4 : 9 * scale)
+  world.camera.flash('#dff2ff', kind === 'charged' ? 0.28 : 0.18)
+  world.audio.play('freeze')
+  world.audio.play('glass')
+}
+
+function attackBlackHole(world: World, action: WeaponAction, kind: AttackKind): void {
+  const scale = visualScale('blackhole', kind, action)
+  const particles = particleScale('blackhole', kind, action)
+  world.effects.add(blackhole(action.x, action.y, 180 * scale, { dur: 1.5 }))
+  checkedDamage(
+    world,
+    action,
+    { kind: 'ellipse', x: action.x, y: action.y, rx: 180 * scale, ry: 112 * scale, rotation: 0.18 },
+    damageRatios('blackhole', kind, action),
+    8 + 10 * chargeAmount(action),
+    'dissolve'
+  )
+
+  const visualRng = new Rng(action.seed ^ 0xb1ac40)
+  const count = fx.scaledCount(44, particles, 70)
+  for (let i = 0; i < count; i++) {
+    const angle = visualRng.angle()
+    const distance = visualRng.range(120, 340) * scale
+    const speed = visualRng.range(160, 380)
+    world.particles.spawn({
+      x: action.x + Math.cos(angle) * distance,
+      y: action.y + Math.sin(angle) * distance,
+      vx: -Math.cos(angle) * speed,
+      vy: -Math.sin(angle) * speed,
+      life: distance / speed,
+      size: visualRng.range(1.5, 3.5),
+      color: visualRng.pick(['#b06bff', '#7fd0ff', '#ffffff', '#c9a3e8']),
+      kind: 'spark',
+      drag: 0.2,
+    })
+  }
+  world.camera.shake(kind === 'drag' ? 5 : 10 * scale)
+  world.audio.play('whoosh')
+  world.audio.play('boom')
+}
+
+const ATTACKS: Record<
+  ElementalWeaponId,
+  (world: World, action: WeaponAction, kind: AttackKind) => void
+> = {
+  hammer: attackHammer,
+  fist: attackFist,
+  glass: attackGlass,
+  laser: attackLaser,
+  meteor: attackMeteor,
+  missile: attackMissile,
+  bomb: attackBomb,
+  lightning: attackLightning,
+  flame: attackFlame,
+  tornado: attackTornado,
+  freeze: attackFreeze,
+  blackhole: attackBlackHole,
+}
+
+function makeElemental(
+  id: ElementalWeaponId,
+  name: string,
+  icon: string,
+  mode: Weapon['mode'] = 'point'
+): Weapon {
+  const attack = ATTACKS[id]
+  const weapon: Weapon = {
+    id,
+    name,
+    icon,
+    mode,
+    quick: (world, action) => attack(world, action, 'quick'),
+    drag: (world, action) => attack(world, action, 'drag'),
+    charged: (world, action) => attack(world, action, 'charged'),
+  }
+  weapon.apply = (world, x, y) => attack(world, legacyAction(id, world, x, y), 'quick')
+  return weapon
 }
 
 export const elementalWeapons: Weapon[] = [
-  hammer,
-  fist,
-  glass,
-  laser,
-  meteor,
-  missile,
-  bomb,
-  lightningBolt,
-  flame,
-  tornadoWeapon,
-  freeze,
-  blackHole,
+  makeElemental('hammer', '망치', '🔨'),
+  makeElemental('fist', '주먹', '👊'),
+  makeElemental('glass', '유리', '🧊'),
+  makeElemental('laser', '레이저', '🔪'),
+  makeElemental('meteor', '운석', '☄️'),
+  makeElemental('missile', '미사일', '🚀'),
+  makeElemental('bomb', '대폭발', '💣'),
+  makeElemental('lightning', '번개', '⚡'),
+  makeElemental('flame', '화염', '🔥'),
+  makeElemental('tornado', '토네이도', '🌪️'),
+  makeElemental('freeze', '빙결', '❄️'),
+  makeElemental('blackhole', '블랙홀', '🕳️', 'cinematic'),
 ]
