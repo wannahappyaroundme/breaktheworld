@@ -88,7 +88,7 @@ function makeWeapon(overrides: Partial<Weapon> = {}): Weapon {
   }
 }
 
-function harness() {
+function harness(strongInput: 'hold' | 'doubleTap' = 'hold') {
   let target = makeTarget()
   let targetRunId = 7
   let now = 1_000
@@ -100,6 +100,7 @@ function harness() {
     getTargetRunId: () => targetRunId,
     now: () => now,
     nextSeed: () => seed,
+    strongInput,
     onSettled: settled,
     onDamage: damaged,
   })
@@ -130,6 +131,18 @@ function harness() {
       seed = next
     },
   }
+}
+
+function completeTap(
+  h: ReturnType<typeof harness>,
+  weapon: Weapon,
+  world: World,
+  id: number,
+  x: number,
+  y: number
+) {
+  h.controller.handle({ type: 'press', id, x, y }, weapon, world)
+  return h.controller.handle({ type: 'tap', id, x, y }, weapon, world)
 }
 
 describe('ActionController damage guard', () => {
@@ -526,6 +539,249 @@ describe('ActionController gesture settlement', () => {
       world,
       expect.objectContaining({ x: 11, y: 21, charge: 0, seed: 99 })
     )
+  })
+})
+
+describe('ActionController double-tap strong input', () => {
+  it('keeps hold mode as the immediate zero-delay default', () => {
+    const h = harness()
+    const weapon = makeWeapon()
+    const world = makeWorld(h.target)
+
+    expect(completeTap(h, weapon, world, 1, 10, 20)).toMatchObject({ kind: 'quick' })
+    expect(weapon.quick).toHaveBeenCalledTimes(1)
+    expect(h.settled).toHaveBeenCalledTimes(1)
+  })
+
+  it('settles one pending quick exactly at the 280ms timeout', () => {
+    const h = harness('doubleTap')
+    const weapon = makeWeapon()
+    const world = makeWorld(h.target)
+
+    expect(completeTap(h, weapon, world, 1, 10, 20)).toBeNull()
+    expect(weapon.quick).not.toHaveBeenCalled()
+
+    h.now = 1_279
+    h.controller.update(h.now)
+    expect(weapon.quick).not.toHaveBeenCalled()
+    h.now = 1_280
+    h.controller.update(h.now)
+    h.controller.update(h.now)
+
+    expect(weapon.quick).toHaveBeenCalledTimes(1)
+    expect(weapon.charged).not.toHaveBeenCalled()
+    expect(h.settled).toHaveBeenCalledTimes(1)
+    expect(h.controller.comboGraceUntil).toBe(1_480)
+  })
+
+  it.each(['point', 'cinematic'] as const)(
+    'turns a second %s tap at 279ms and 31px into one max charged action',
+    (mode) => {
+      const h = harness('doubleTap')
+      const weapon = makeWeapon({ mode })
+      const world = makeWorld(h.target)
+      completeTap(h, weapon, world, 1, 10, 20)
+
+      h.now = 1_279
+      const result = completeTap(h, weapon, world, 2, 41, 20)
+
+      expect(result).toMatchObject({ kind: 'charged', charge: 1 })
+      expect(weapon.quick).not.toHaveBeenCalled()
+      expect(weapon.charged).toHaveBeenCalledTimes(1)
+      expect(h.settled).toHaveBeenCalledTimes(1)
+      expect(h.controller.state).toBe(mode === 'cinematic' ? 'cinematic' : 'recovery')
+    }
+  )
+
+  it('treats exactly 280ms as two deterministic pending quick taps', () => {
+    const h = harness('doubleTap')
+    const weapon = makeWeapon()
+    const world = makeWorld(h.target)
+    completeTap(h, weapon, world, 1, 10, 20)
+
+    h.now = 1_280
+    expect(completeTap(h, weapon, world, 2, 10, 20)).toBeNull()
+    expect(weapon.quick).toHaveBeenCalledTimes(1)
+    expect(weapon.charged).not.toHaveBeenCalled()
+
+    h.now = 1_559
+    h.controller.update(h.now)
+    expect(weapon.quick).toHaveBeenCalledTimes(1)
+    h.now = 1_560
+    h.controller.update(h.now)
+    expect(weapon.quick).toHaveBeenCalledTimes(2)
+    expect(h.settled).toHaveBeenCalledTimes(2)
+  })
+
+  it('treats exactly 32px as first quick plus a new pending tap', () => {
+    const h = harness('doubleTap')
+    const weapon = makeWeapon()
+    const world = makeWorld(h.target)
+    completeTap(h, weapon, world, 1, 10, 20)
+
+    h.now = 1_279
+    expect(completeTap(h, weapon, world, 2, 42, 20)).toBeNull()
+    expect(weapon.quick).toHaveBeenCalledTimes(1)
+    expect(weapon.charged).not.toHaveBeenCalled()
+
+    h.now = 1_558
+    h.controller.update(h.now)
+    expect(weapon.quick).toHaveBeenCalledTimes(1)
+    h.now = 1_559
+    h.controller.update(h.now)
+    expect(weapon.quick).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    ['exactly 280ms', 1_280, 10],
+    ['exactly 32px', 1_279, 42],
+  ] as const)(
+    'settles the first cinematic quick and ignores the boundary tap during lock at %s',
+    (_boundary, boundaryTime, secondX) => {
+      const h = harness('doubleTap')
+      const weapon = makeWeapon({ mode: 'cinematic' })
+      const world = makeWorld(h.target)
+      completeTap(h, weapon, world, 1, 10, 20)
+
+      h.now = boundaryTime
+      expect(completeTap(h, weapon, world, 2, secondX, 20)).toBeNull()
+      expect(weapon.quick).toHaveBeenCalledTimes(1)
+      expect(weapon.charged).not.toHaveBeenCalled()
+
+      h.now = boundaryTime + 1_400
+      h.controller.update(h.now)
+      expect(completeTap(h, weapon, world, 3, 10, 20)).toBeNull()
+      h.now += 280
+      h.controller.update(h.now)
+      expect(weapon.quick).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it('ignores duplicate release and settles the pending quick once', () => {
+    const h = harness('doubleTap')
+    const weapon = makeWeapon()
+    const world = makeWorld(h.target)
+    completeTap(h, weapon, world, 1, 10, 20)
+
+    expect(h.controller.handle({ type: 'tap', id: 1, x: 10, y: 20 }, weapon, world)).toBeNull()
+    h.now = 1_280
+    h.controller.update(h.now)
+
+    expect(weapon.quick).toHaveBeenCalledTimes(1)
+    expect(h.settled).toHaveBeenCalledTimes(1)
+  })
+
+  it.each<CancelReason>([
+    'next',
+    'reset',
+    'visibility',
+    'weaponChange',
+    'targetDestroyed',
+    'settingsMode',
+    'gesture',
+  ])('cancels pending damage and combo grace for %s', (reason) => {
+    const h = harness('doubleTap')
+    const quick = vi.fn((_world: World, action: Parameters<Weapon['quick']>[1]) =>
+      action.damage(damageRequest(h.target))
+    )
+    const weapon = makeWeapon({ quick })
+    const world = makeWorld(h.target)
+    completeTap(h, weapon, world, 1, 10, 20)
+
+    h.controller.cancel(reason)
+    h.now = 2_000
+    h.controller.update(h.now)
+
+    expect(quick).not.toHaveBeenCalled()
+    expect(h.damaged).not.toHaveBeenCalled()
+    expect(h.target.attachedCount).toBe(20)
+    expect(h.controller.state).toBe('idle')
+    expect(h.controller.hasComboGrace(h.now)).toBe(false)
+  })
+
+  it('cancels the pending tap without damage when the next gesture becomes a drag', () => {
+    const h = harness('doubleTap')
+    const weapon = makeWeapon()
+    const world = makeWorld(h.target)
+    completeTap(h, weapon, world, 1, 10, 20)
+
+    h.now = 1_100
+    h.controller.handle({ type: 'press', id: 2, x: 30, y: 20 }, weapon, world)
+    h.controller.handle({ type: 'dragStart', id: 2, x: 46, y: 20 }, weapon, world)
+    h.now = 2_000
+    h.controller.update(h.now)
+
+    expect(weapon.quick).not.toHaveBeenCalled()
+    expect(weapon.charged).not.toHaveBeenCalled()
+    expect(weapon.drag).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancels a pending tap when the target run is replaced', () => {
+    const h = harness('doubleTap')
+    const weapon = makeWeapon()
+    const world = makeWorld(h.target)
+    completeTap(h, weapon, world, 1, 10, 20)
+
+    h.targetRunId += 1
+    h.now = 1_280
+    h.controller.update(h.now)
+
+    expect(weapon.quick).not.toHaveBeenCalled()
+    expect(weapon.charged).not.toHaveBeenCalled()
+    expect(h.controller.state).toBe('idle')
+  })
+
+  it('cancels pending damage when the strong-input setting changes at runtime', () => {
+    const h = harness('doubleTap')
+    const weapon = makeWeapon()
+    const world = makeWorld(h.target)
+    completeTap(h, weapon, world, 1, 10, 20)
+
+    h.controller.setStrongInput('hold')
+    h.now = 2_000
+    h.controller.update(h.now)
+    expect(weapon.quick).not.toHaveBeenCalled()
+
+    expect(completeTap(h, weapon, world, 2, 10, 20)).toMatchObject({ kind: 'quick' })
+    expect(weapon.quick).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancels a pending tap before a cinematic system action locks the controller', () => {
+    const h = harness('doubleTap')
+    const pendingWeapon = makeWeapon({ id: 'pending' })
+    const cinematic = makeWeapon({ id: 'cinematic', mode: 'cinematic' })
+    const world = makeWorld(h.target)
+    completeTap(h, pendingWeapon, world, 1, 10, 20)
+
+    expect(h.controller.runSystemQuick(cinematic, world, 40, 50)).toMatchObject({
+      kind: 'quick',
+      weaponId: 'cinematic',
+    })
+    h.now = 2_000
+    h.controller.update(h.now)
+
+    expect(pendingWeapon.quick).not.toHaveBeenCalled()
+    expect(cinematic.quick).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses double-tap instead of hold charge while that setting is active', () => {
+    const h = harness('doubleTap')
+    const weapon = makeWeapon()
+    const world = makeWorld(h.target)
+
+    h.controller.handle({ type: 'press', id: 1, x: 10, y: 20 }, weapon, world)
+    h.now = 1_450
+    h.controller.handle({ type: 'chargeStart', id: 1, x: 10, y: 20 }, weapon, world)
+    h.controller.handle(
+      { type: 'chargeRelease', id: 1, x: 10, y: 20, charge: 0.8 },
+      weapon,
+      world
+    )
+    expect(weapon.charged).not.toHaveBeenCalled()
+
+    h.now = 1_730
+    h.controller.update(h.now)
+    expect(weapon.quick).toHaveBeenCalledTimes(1)
   })
 })
 

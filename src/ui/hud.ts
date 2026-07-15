@@ -1,39 +1,70 @@
+import {
+  NotificationQueue,
+  type NotificationInput,
+  type NotificationScheduler,
+  type QueuedNotification,
+} from './notification-queue'
+
 export interface HudCallbacks {
   onToggleSound: () => void
   onReset: () => void
   onNext: () => void
   onWhatsNew: () => void
+  onOpenRecordBook?: () => void
   onShare: () => void
 }
 
-/** Top HUD: combo counter + sound / next / reset buttons + weapon name flash. */
+export interface HudOptions {
+  scheduler?: NotificationScheduler
+}
+
+function browserScheduler(): NotificationScheduler {
+  return {
+    schedule(run, delayMs) {
+      const handle = window.setTimeout(run, delayMs)
+      return () => window.clearTimeout(handle)
+    },
+  }
+}
+
+function span(className: string, text: string): HTMLSpanElement {
+  const element = document.createElement('span')
+  element.className = className
+  element.textContent = text
+  return element
+}
+
+/** Top HUD with one queued live-region notice renderer. */
 export class Hud {
   private comboN: HTMLSpanElement
   private comboBox: HTMLDivElement
-  private bestEl!: HTMLSpanElement
+  private bestEl: HTMLSpanElement
   private soundBtn: HTMLButtonElement
   private parent: HTMLElement
-  private feverBanner!: HTMLDivElement
+  private feverBanner: HTMLDivElement
+  private noticeEl: HTMLDivElement
+  private notices: NotificationQueue
+  private noticeSequence = 0
 
-  constructor(parent: HTMLElement, cb: HudCallbacks) {
+  constructor(parent: HTMLElement, cb: HudCallbacks, options: HudOptions = {}) {
     this.parent = parent
     const top = document.createElement('div')
     top.className = 'hud-top'
 
     this.comboBox = document.createElement('div')
     this.comboBox.className = 'combo'
-    this.comboBox.innerHTML = `<span class="n">0</span><span class="label">COMBO</span><span class="best">🏆 0</span>`
-    this.comboN = this.comboBox.querySelector('.n') as HTMLSpanElement
-    this.bestEl = this.comboBox.querySelector('.best') as HTMLSpanElement
+    this.comboN = span('n', '0')
+    this.bestEl = span('best', '🏆 0')
+    this.comboBox.append(this.comboN, span('label', 'COMBO'), this.bestEl)
 
     const buttons = document.createElement('div')
     buttons.className = 'top-buttons'
-    const shareBtn = mkBtn('📸', cb.onShare)
-    const newsBtn = mkBtn('✨', cb.onWhatsNew)
-    this.soundBtn = mkBtn('🔊', cb.onToggleSound)
-    const nextBtn = mkBtn('⏭️', cb.onNext)
-    const resetBtn = mkBtn('🔄', cb.onReset)
-    buttons.append(shareBtn, newsBtn, this.soundBtn, nextBtn, resetBtn)
+    const shareBtn = mkBtn('📸', '기록 카드 공유', cb.onShare)
+    const recordBtn = mkBtn('📖', '기록책 열기', cb.onOpenRecordBook ?? cb.onWhatsNew)
+    this.soundBtn = mkBtn('🔊', '소리 끄기', cb.onToggleSound)
+    const nextBtn = mkBtn('⏭️', '다음 타겟', cb.onNext)
+    const resetBtn = mkBtn('🔄', '처음부터', cb.onReset)
+    buttons.append(shareBtn, recordBtn, this.soundBtn, nextBtn, resetBtn)
 
     top.append(this.comboBox, buttons)
     parent.appendChild(top)
@@ -42,6 +73,19 @@ export class Hud {
     this.feverBanner.className = 'fever-banner'
     this.feverBanner.textContent = '🌈 FEVER! 🌈'
     parent.appendChild(this.feverBanner)
+
+    this.noticeEl = document.createElement('div')
+    this.noticeEl.className = 'hud-notice'
+    this.noticeEl.setAttribute('role', 'status')
+    this.noticeEl.setAttribute('aria-live', 'polite')
+    this.noticeEl.setAttribute('aria-atomic', 'true')
+    parent.appendChild(this.noticeEl)
+
+    this.notices = new NotificationQueue({
+      scheduler: options.scheduler ?? browserScheduler(),
+      onShow: (notice) => this.showNotice(notice),
+      onHide: () => this.hideNotice(),
+    })
   }
 
   setFever(on: boolean): void {
@@ -56,12 +100,13 @@ export class Hud {
 
   setMuted(muted: boolean): void {
     this.soundBtn.textContent = muted ? '🔇' : '🔊'
+    this.soundBtn.setAttribute('aria-label', muted ? '소리 켜기' : '소리 끄기')
   }
 
   flashWeapon(name: string): void {
     const el = document.createElement('div')
     el.className = 'weapon-flash show'
-    el.textContent = name + '!'
+    el.textContent = `${name}!`
     this.parent.appendChild(el)
     window.setTimeout(() => el.remove(), 700)
   }
@@ -70,48 +115,74 @@ export class Hud {
     this.bestEl.textContent = `🏆 ${n}`
   }
 
-  /** Top banner shown when the player beats their best combo. */
+  notify(input: NotificationInput): boolean {
+    return this.notices.push(input)
+  }
+
+  /** Compatibility method routed through the shared record-priority queue. */
   showNewRecord(n: number): void {
-    const el = document.createElement('div')
-    el.className = 'record-banner show'
-    el.innerHTML = `🎉 신기록! <b>${n}</b> 콤보`
-    this.parent.appendChild(el)
-    window.setTimeout(() => el.remove(), 1800)
+    this.notify({
+      key: `record:${n}`,
+      kind: 'record',
+      text: `🎉 신기록! ${n} 연속`,
+      durationMs: 1_800,
+    })
   }
 
-  /** Center celebratory popup, e.g. when a target is destroyed. */
+  /** Compatibility method routed through the shared live-region queue. */
   popup(text: string): void {
-    const el = document.createElement('div')
-    el.className = 'celebrate-popup show'
-    el.textContent = text
-    this.parent.appendChild(el)
-    window.setTimeout(() => el.remove(), 900)
+    this.notify({
+      key: this.transientKey('popup'),
+      kind: 'general',
+      text,
+      durationMs: 900,
+    })
   }
 
-  /** Combo grade flash (GREAT / SUPER / INSANE ...). */
+  /** Compatibility method routed through the shared live-region queue. */
   gradeFlash(label: string): void {
-    const el = document.createElement('div')
-    el.className = 'grade-flash show'
-    el.textContent = label
-    this.parent.appendChild(el)
-    window.setTimeout(() => el.remove(), 800)
+    this.notify({
+      key: this.transientKey('grade'),
+      kind: 'general',
+      text: label,
+      durationMs: 800,
+    })
   }
 
-  /** Neutral top toast, e.g. cumulative milestones. */
+  /** Compatibility method routed through the shared live-region queue. */
   toast(text: string): void {
-    const el = document.createElement('div')
-    el.className = 'toast show'
-    el.textContent = text
-    this.parent.appendChild(el)
-    window.setTimeout(() => el.remove(), 2000)
+    this.notify({
+      key: this.transientKey('toast'),
+      kind: 'general',
+      text,
+      durationMs: 2_000,
+    })
+  }
+
+  private transientKey(prefix: string): string {
+    return `${prefix}:${++this.noticeSequence}`
+  }
+
+  private showNotice(notice: QueuedNotification): void {
+    this.noticeEl.textContent = notice.text
+    this.noticeEl.setAttribute('data-kind', notice.kind)
+    this.noticeEl.classList.add('show')
+  }
+
+  private hideNotice(): void {
+    this.noticeEl.classList.remove('show')
+    this.noticeEl.textContent = ''
+    this.noticeEl.removeAttribute('data-kind')
   }
 }
 
-function mkBtn(label: string, onClick: () => void): HTMLButtonElement {
-  const b = document.createElement('button')
-  b.className = 'icon-btn'
-  b.textContent = label
-  b.addEventListener('click', onClick)
-  b.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true })
-  return b
+function mkBtn(label: string, accessibleName: string, onClick: () => void): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'icon-btn'
+  button.textContent = label
+  button.setAttribute('aria-label', accessibleName)
+  button.addEventListener('click', onClick)
+  button.addEventListener('touchstart', (event) => event.stopPropagation(), { passive: true })
+  return button
 }
