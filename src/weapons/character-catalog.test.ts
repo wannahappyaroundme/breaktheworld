@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Camera } from '../engine/camera'
 import { Particles } from '../engine/particles'
 import { Audio } from '../engine/audio'
@@ -17,10 +17,16 @@ import { runCharacterMove } from './character-runtime'
 import { characterWeapons } from './characters'
 import {
   CHARACTER_SKINS,
+  preloadAssets,
   resolveCharacterSkinAsset,
   type CharacterSkinGetter,
 } from '../art/assets'
 import { elementalPatternMemory } from './pattern-memory'
+import { createWeaponRoster } from './registry'
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 const EXPECTED_IDS = {
   cinnamoroll: ['cloudBounce', 'earSweep', 'skyPress'],
@@ -208,6 +214,59 @@ describe('character move catalog', () => {
     expect(resolveCharacterSkinAsset('cinnamoroll', classic)).toBe('cinnamorollOld')
     expect(classic).toHaveBeenCalledWith('cinnamoroll')
     expect(resolveCharacterSkinAsset('ditto', invalid)).toBe('ditto')
+  })
+
+  it('reads a changed skin getter at character draw time after roster creation', async () => {
+    class FakeImage {
+      naturalWidth = 100
+      naturalHeight = 100
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      private value = ''
+
+      get src(): string {
+        return this.value
+      }
+
+      set src(value: string) {
+        this.value = value
+        this.onload?.()
+      }
+    }
+    vi.stubGlobal('Image', FakeImage)
+    await preloadAssets('/skin-test/')
+
+    let selected = 'default'
+    const roster = createWeaponRoster(() => selected)
+    expect(roster).toHaveLength(21)
+    const weapon = roster.find((candidate) => candidate.id === 'cinnamoroll')!
+    const world = makeWorld(40)
+    const drawImage = vi.fn()
+    const ctx = {
+      save() {},
+      restore() {},
+      beginPath() {},
+      ellipse() {},
+      fill() {},
+      translate() {},
+      rotate() {},
+      scale() {},
+      drawImage,
+      globalAlpha: 1,
+      fillStyle: '',
+    } as unknown as CanvasRenderingContext2D
+
+    weapon.quick(world, damageHarness(40, 120_001, 1).action)
+    world.effects.drawAbove(ctx)
+    const defaultImage = drawImage.mock.calls[drawImage.mock.calls.length - 1][0] as FakeImage
+    expect(defaultImage.src).toContain('/assets/cinnamoroll.png')
+
+    selected = 'classic'
+    drawImage.mockClear()
+    weapon.quick(world, damageHarness(40, 120_002, 2).action)
+    world.effects.drawAbove(ctx)
+    const classicImage = drawImage.mock.calls[drawImage.mock.calls.length - 1][0] as FakeImage
+    expect(classicImage.src).toContain('/assets/cinnamoroll-old.png')
   })
 
   it('builds copySmash from the last successful elemental pattern', () => {

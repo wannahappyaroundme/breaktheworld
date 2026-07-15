@@ -282,6 +282,76 @@ describe('ActionController gesture settlement', () => {
     )
   })
 
+  it('keeps two delayed point system actions valid on the same target run', () => {
+    const h = harness()
+    const world = makeWorld(h.target)
+    const quick = vi.fn((_world: World, action: Parameters<Weapon['quick']>[1]) => {
+      world.effects.add({
+        update() {
+          action.damage(damageRequest(h.target))
+          return false
+        },
+        draw() {},
+      })
+    })
+    const weapon = makeWeapon({ quick })
+
+    h.controller.runSystemQuick(weapon, world, 20, 30)
+    h.controller.runSystemQuick(weapon, world, 40, 50)
+    expect(h.damaged).not.toHaveBeenCalled()
+
+    world.effects.update(1)
+
+    expect(quick).toHaveBeenCalledTimes(2)
+    expect(h.damaged).toHaveBeenCalledTimes(2)
+    expect(h.target.attachedCount).toBe(10)
+  })
+
+  it.each(['replacement', 'cancel'] as const)(
+    'invalidates pending point system actions after %s',
+    (invalidation) => {
+      const h = harness()
+      const world = makeWorld(h.target)
+      const results: Array<ReturnType<Parameters<Weapon['quick']>[1]['damage']>> = []
+      const weapon = makeWeapon({
+        quick: (_world, action) => {
+          world.effects.add({
+            update() {
+              results.push(action.damage(damageRequest(h.target)))
+              return false
+            },
+            draw() {},
+          })
+        },
+      })
+
+      h.controller.runSystemQuick(weapon, world, 20, 30)
+      h.controller.runSystemQuick(weapon, world, 40, 50)
+      if (invalidation === 'replacement') h.targetRunId++
+      else h.controller.cancel('system')
+      world.effects.update(1)
+
+      expect(h.damaged).not.toHaveBeenCalled()
+      expect(h.target.attachedCount).toBe(20)
+      expect(results).toEqual([null, null])
+    }
+  )
+
+  it('keeps cinematic system actions one at a time through recovery', () => {
+    const h = harness()
+    const world = makeWorld(h.target)
+    const quick = vi.fn()
+    const weapon = makeWeapon({ mode: 'cinematic', quick })
+
+    expect(h.controller.runSystemQuick(weapon, world, 20, 30)).not.toBeNull()
+    expect(h.controller.runSystemQuick(weapon, world, 40, 50)).toBeNull()
+    expect(quick).toHaveBeenCalledTimes(1)
+
+    h.now += 1_401
+    expect(h.controller.runSystemQuick(weapon, world, 60, 70)).not.toBeNull()
+    expect(quick).toHaveBeenCalledTimes(2)
+  })
+
   it('settles a tap once and ignores a duplicate release', () => {
     const h = harness()
     const weapon = makeWeapon()

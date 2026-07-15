@@ -134,8 +134,8 @@ export class ActionController {
   ): ActionResolution | null {
     const nowMs = this.now()
     this.update(nowMs)
-    if (this.isCinematicLocked(nowMs)) return null
-    this.cancel('system')
+    const cinematic = weapon.mode === 'cinematic'
+    if (cinematic && this.isCinematicLocked(nowMs)) return null
     const active = this.beginAction(
       {
         weapon,
@@ -144,9 +144,12 @@ export class ActionController {
         y,
         seed: this.nextSeed(),
       },
-      world
+      world,
+      'pressed',
+      true,
+      cinematic
     )
-    return this.settle(active, 'quick', x, y, 0, nowMs)
+    return this.settle(active, 'quick', x, y, 0, nowMs, false, !cinematic)
   }
 
   handle(event: GestureEvent, weapon: Weapon, world: World): ActionResolution | null {

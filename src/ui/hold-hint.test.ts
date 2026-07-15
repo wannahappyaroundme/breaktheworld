@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ActionDamageResolution } from '../combat/action-controller'
 import {
   HOLD_HINT_COPY,
@@ -29,6 +29,10 @@ function damage(kind: ActionDamageResolution['kind'], detached: number): ActionD
   }
 }
 
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
 describe('OneTimeHoldHint', () => {
   it('reveals exact copy once after the first valid quick damage and persists a migration key', () => {
     const classList = new FakeClassList()
@@ -41,6 +45,8 @@ describe('OneTimeHoldHint', () => {
       scheduleHide
     )
 
+    hint.hideInitial()
+    expect(classList.hidden).toBe(true)
     expect(hint.onDamage(damage('charged', 8))).toBe(false)
     expect(hint.onDamage(damage('quick', 0))).toBe(false)
     expect(hint.onDamage(damage('quick', 4))).toBe(true)
@@ -49,6 +55,13 @@ describe('OneTimeHoldHint', () => {
     expect(classList.hidden).toBe(false)
     expect(storage.setItem).toHaveBeenCalledWith(LEGACY_HOLD_HINT_SEEN_KEY, '1')
     expect(scheduleHide).toHaveBeenCalledTimes(1)
+    expect(scheduleHide).toHaveBeenCalledWith(expect.any(Function), 4_000)
+
+    hint.hideInitial()
+    expect(classList.hidden).toBe(false)
+    const hide = scheduleHide.mock.calls[0][0] as () => void
+    hide()
+    expect(classList.hidden).toBe(true)
     expect(hint.onDamage(damage('quick', 4))).toBe(false)
   })
 
@@ -75,5 +88,19 @@ describe('OneTimeHoldHint', () => {
 
     expect(() => hint.onDamage(damage('quick', 4))).not.toThrow()
     expect(hint.onDamage(damage('quick', 4))).toBe(false)
+  })
+
+  it('survives a throwing browser localStorage getter before constructor body execution', () => {
+    const browser = Object.defineProperty({}, 'localStorage', {
+      get() {
+        throw new Error('getter blocked')
+      },
+    })
+    vi.stubGlobal('window', browser)
+    const element = { textContent: '', classList: new FakeClassList() }
+
+    expect(
+      () => new OneTimeHoldHint(element as unknown as HTMLElement, undefined, vi.fn())
+    ).not.toThrow()
   })
 })

@@ -22,6 +22,7 @@ import { WhatsNew } from './ui/whatsnew'
 import { shareCard } from './ui/sharecard'
 import { WeaponBar } from './weapons/bar'
 import { OneTimeHoldHint } from './ui/hold-hint'
+import { readStoredNumber, writeStoredNumber } from './storage'
 
 const COMBO_RESET_SEC = 1.6
 const BEST_KEY = 'btw.bestCombo'
@@ -85,8 +86,8 @@ export class Game {
       this.renderer.height
     )
 
-    this.best = Number(localStorage.getItem(BEST_KEY) || '0') || 0
-    this.totalTargets = Number(localStorage.getItem(STATS_KEY) || '0') || 0
+    this.best = readStoredNumber(BEST_KEY)
+    this.totalTargets = readStoredNumber(STATS_KEY)
     this.weaponRoster = createWeaponRoster((characterId) => this.selectedCharacterSkin(characterId))
     this.weapon = findWeapon(defaultWeaponId, this.weaponRoster)
     this.controller = new ActionController({
@@ -214,7 +215,7 @@ export class Game {
 
     if (this.combo > this.best) {
       this.best = this.combo
-      localStorage.setItem(BEST_KEY, String(this.best))
+      writeStoredNumber(BEST_KEY, this.best)
       this.hud.setBest(this.best)
       if (!this.recordActive && this.combo >= 5) {
         this.recordActive = true
@@ -317,7 +318,7 @@ export class Game {
 
     // cumulative milestone (loss-aversion retention)
     this.totalTargets++
-    localStorage.setItem(STATS_KEY, String(this.totalTargets))
+    writeStoredNumber(STATS_KEY, this.totalTargets)
     if (MILESTONES.includes(this.totalTargets)) {
       this.hud.toast(`🎉 ${this.totalTargets}번째 파괴 달성!`)
     }
