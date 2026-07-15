@@ -259,26 +259,42 @@ function attackMissile(world: World, action: WeaponAction, kind: AttackKind): vo
   const desired = kind === 'drag' ? 1 : kind === 'quick' ? 2 : 4
   const count = Math.min(desired, Math.max(1, world.target.attachedCount - 1))
   const totalRatios = damageRatios('missile', kind, action)
+  const targets = Array.from({ length: count }, (_unused, index) => ({
+    x: action.x + visualRng.spread(90 * scale),
+    y: action.y + visualRng.spread(60 * scale),
+    startXOffset: visualRng.spread(40),
+    index,
+  }))
+  let impactsRemaining = count
+  let damageSettled = false
 
-  for (let i = 0; i < count; i++) {
-    const targetX = action.x + visualRng.spread(90 * scale)
-    const targetY = action.y + visualRng.spread(60 * scale)
-    const perImpact = { min: totalRatios.min / count, max: totalRatios.max / count }
+  const settleVolleyDamage = () => {
+    if (damageSettled) return
+    damageSettled = true
+    checkedDamage(
+      world,
+      action,
+      {
+        kind: 'multi',
+        points: targets.map((target) => ({ x: target.x, y: target.y })),
+        radius: 70 * scale,
+      },
+      totalRatios,
+      60 + 24 * chargeAmount(action),
+      'fall'
+    )
+  }
+
+  for (const target of targets) {
     const impact = () => {
-      checkedDamage(
-        world,
-        action,
-        { kind: 'circle', x: targetX, y: targetY, radius: 70 * scale },
-        perImpact,
-        60 + 24 * chargeAmount(action),
-        'fall'
-      )
-      world.effects.add(explosion(targetX, targetY, 90 * scale))
-      fx.debris(world.particles, targetX, targetY, fx.scaledCount(12, particles), EARTH)
-      fx.fireBits(world.particles, targetX, targetY, fx.scaledCount(10, particles))
-      fx.smoke(world.particles, targetX, targetY, fx.scaledCount(5, particles))
+      world.effects.add(explosion(target.x, target.y, 90 * scale))
+      fx.debris(world.particles, target.x, target.y, fx.scaledCount(12, particles), EARTH)
+      fx.fireBits(world.particles, target.x, target.y, fx.scaledCount(10, particles))
+      fx.smoke(world.particles, target.x, target.y, fx.scaledCount(5, particles))
       world.camera.shake(kind === 'drag' ? 5 : 14 * scale)
       world.audio.play('boom')
+      impactsRemaining--
+      if (impactsRemaining === 0) settleVolleyDamage()
     }
     if (kind === 'drag') {
       impact()
@@ -286,8 +302,8 @@ function attackMissile(world: World, action: WeaponAction, kind: AttackKind): vo
     }
     addProjectile(
       world,
-      projectile(targetX + visualRng.spread(40), -100 - i * 30, targetX, targetY, {
-        dur: 0.38 + i * 0.07,
+      projectile(target.x + target.startXOffset, -100 - target.index * 30, target.x, target.y, {
+        dur: 0.38 + target.index * 0.07,
         color: '#ff5a3c',
         headR: 9 * scale,
         onImpact: impact,
@@ -464,6 +480,7 @@ function makeElemental(
     id,
     name,
     icon,
+    accentColor: ELEMENTAL_CHARGE[id].color,
     mode,
     quick: (world, action) => attack(world, action, 'quick'),
     drag: (world, action) => attack(world, action, 'drag'),

@@ -240,6 +240,28 @@ describe('ActionController gesture settlement', () => {
     expect(h.controller.hasComboGrace(1_901)).toBe(false)
   })
 
+  it('uses the weapon accent for the charge ring', () => {
+    const h = harness()
+    const weapon = makeWeapon({ accentColor: '#ff5a3c' })
+    const world = makeWorld(h.target)
+
+    h.controller.handle({ type: 'press', id: 1, x: 10, y: 20 }, weapon, world)
+    h.controller.handle({ type: 'chargeStart', id: 1, x: 10, y: 20 }, weapon, world)
+
+    expect(h.controller.chargeState?.color).toBe('#ff5a3c')
+  })
+
+  it('falls back to a stable id-derived charge-ring accent', () => {
+    const h = harness()
+    const weapon = makeWeapon()
+    const world = makeWorld(h.target)
+
+    h.controller.handle({ type: 'press', id: 1, x: 10, y: 20 }, weapon, world)
+    h.controller.handle({ type: 'chargeStart', id: 1, x: 10, y: 20 }, weapon, world)
+
+    expect(h.controller.chargeState?.color).toBe('hsl(105 82% 62%)')
+  })
+
   it('settles a secondary tap without cancelling the primary charge', () => {
     const h = harness()
     const weapon = makeWeapon()

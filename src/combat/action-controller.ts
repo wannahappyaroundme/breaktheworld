@@ -65,7 +65,7 @@ interface ActiveAction {
   settled: boolean
 }
 
-function accentColor(weaponId: string): string {
+function fallbackAccentColor(weaponId: string): string {
   let hash = 0
   for (let i = 0; i < weaponId.length; i++) hash = (hash * 31 + weaponId.charCodeAt(i)) | 0
   return `hsl(${Math.abs(hash) % 360} 82% 62%)`
@@ -215,7 +215,7 @@ export class ActionController {
           x: event.x,
           y: event.y,
           charge: 0,
-          color: accentColor(gesture.weapon.id),
+          color: gesture.weapon.accentColor ?? fallbackAccentColor(gesture.weapon.id),
           maxed: false,
           nowMs,
         }

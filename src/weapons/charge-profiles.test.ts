@@ -1,14 +1,46 @@
-import { describe, expect, it, vi } from 'vitest'
-import type { DamageRequest, DamageResult } from '../combat/damage'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { ActionController } from '../combat/action-controller'
+import { damageBudget, type DamageRequest, type DamageResult } from '../combat/damage'
 import { Camera } from '../engine/camera'
 import { Particles } from '../engine/particles'
 import { Audio } from '../engine/audio'
 import { Effects } from '../effects/manager'
 import type { Effect } from '../effects/types'
+import { Breakable } from '../targets/breakable'
 import type { Target } from '../targets/target'
 import { elementalWeapons } from './elemental'
 import { ELEMENTAL_CHARGE } from './charge-profiles'
 import type { WeaponAction, World } from './weapon'
+
+const createElement = vi.fn((tag: string) => {
+  if (tag !== 'canvas') throw new Error(`Unexpected element: ${tag}`)
+  const context = {
+    save() {},
+    restore() {},
+    translate() {},
+    beginPath() {},
+    moveTo() {},
+    lineTo() {},
+    closePath() {},
+    clip() {},
+    drawImage() {},
+    stroke() {},
+    getImageData: (_x: number, _y: number, w: number, h: number) => {
+      const data = new Uint8ClampedArray(w * h * 4)
+      for (let i = 3; i < data.length; i += 4) data[i] = 255
+      return { data }
+    },
+  }
+  return { width: 0, height: 0, getContext: () => context }
+})
+
+beforeAll(() => {
+  vi.stubGlobal('document', { createElement })
+})
+
+afterAll(() => {
+  vi.unstubAllGlobals()
+})
 
 const EXPECTED_CHARGE = {
   hammer: { color: '#ffd23f', maxRadiusScale: 1.5, maxDamageRatio: 0.62 },
@@ -87,6 +119,43 @@ function finishDelayedEffects(effects: Effects): void {
   effects.update(3)
 }
 
+function makeBreakable(fragmentCount: number, seed = 17): Breakable {
+  const target = new Breakable({
+    name: 'elemental-real-target',
+    spriteW: 100,
+    spriteH: 100,
+    fragments: fragmentCount,
+    seed,
+    draw: () => {},
+  })
+  target.reposition(390, 844)
+  return target
+}
+
+function makeRealWorld(target: Breakable): World {
+  return {
+    target,
+    particles: new Particles(500),
+    effects: new Effects(),
+    camera: new Camera(),
+    audio: new Audio(),
+    w: 390,
+    h: 844,
+  }
+}
+
+function makeRealAction(target: Breakable, charge: number, seed = 0x12345678): WeaponAction {
+  return {
+    actionId: 1,
+    targetRunId: 1,
+    x: target.cx,
+    y: target.cy,
+    charge,
+    seed,
+    damage: (request) => target.applyDamage({ ...request, seed }),
+  }
+}
+
 describe('elemental charge profiles', () => {
   it('defines the exact safe charged profile for all 12 elemental weapons', () => {
     expect(ELEMENTAL_CHARGE).toEqual(EXPECTED_CHARGE)
@@ -105,6 +174,9 @@ describe('elemental charge profiles', () => {
       expect(weapon.quick, `${weapon.id} quick`).toBeTypeOf('function')
       expect(weapon.drag, `${weapon.id} drag`).toBeTypeOf('function')
       expect(weapon.charged, `${weapon.id} charged`).toBeTypeOf('function')
+      expect(weapon.accentColor, `${weapon.id} accent`).toBe(
+        ELEMENTAL_CHARGE[weapon.id as keyof typeof ELEMENTAL_CHARGE].color
+      )
     }
   })
 
@@ -162,8 +234,85 @@ describe('elemental charge profiles', () => {
     expect(h.damage).not.toHaveBeenCalled()
 
     finishDelayedEffects(h.effects)
-    expect(h.damage).toHaveBeenCalled()
+    expect(h.damage).toHaveBeenCalledTimes(1)
   })
+
+  it.each([3, 4, 5])(
+    'keeps missile quick and charged damage inside one integer action budget at %i fragments',
+    (requestedFragments) => {
+      const missile = elementalWeapons.find((weapon) => weapon.id === 'missile')!
+      for (const kind of ['quick', 'charged'] as const) {
+        const target = makeBreakable(requestedFragments)
+        const initial = target.initialFragmentCount
+        const world = makeRealWorld(target)
+        const action = makeRealAction(target, kind === 'charged' ? 1 : 0)
+
+        missile[kind]!(world, action)
+        finishDelayedEffects(world.effects)
+
+        const declaredMax = kind === 'charged' ? ELEMENTAL_CHARGE.missile.maxDamageRatio : 0.32
+        const maxDetached = damageBudget(initial, initial, 0, declaredMax).max
+        expect(initial - target.attachedCount, `${kind} at ${initial}`).toBeLessThanOrEqual(
+          maxDetached
+        )
+        expect(target.attachedCount, `${kind} survivor at ${initial}`).toBeGreaterThanOrEqual(1)
+      }
+    }
+  )
+
+  it('derives the same missile trajectory damage pattern from the same action seed', () => {
+    const missile = elementalWeapons.find((weapon) => weapon.id === 'missile')!
+    const patternsFor = (seed: number) => {
+      const h = makeHarness()
+      h.action.seed = seed
+      missile.charged!(h.world, h.action)
+      finishDelayedEffects(h.effects)
+      return h.requests.map((request) => request.pattern)
+    }
+
+    const first = patternsFor(1234)
+    const repeated = patternsFor(1234)
+    const different = patternsFor(5678)
+
+    expect(first).toEqual(repeated)
+    expect(first).not.toEqual(different)
+    expect(first).toHaveLength(1)
+    expect(first[0]).toMatchObject({ kind: 'multi' })
+  })
+
+  it.each([
+    { id: 'meteor', invalidation: 'cancel' },
+    { id: 'missile', invalidation: 'targetRun' },
+  ] as const)(
+    'blocks delayed $id damage after $invalidation invalidation',
+    ({ id, invalidation }) => {
+      const target = makeBreakable(20)
+      const initial = target.attachedCount
+      const world = makeRealWorld(target)
+      let targetRunId = 7
+      const controller = new ActionController({
+        getTarget: () => target,
+        getTargetRunId: () => targetRunId,
+      })
+      const weapon = elementalWeapons.find((candidate) => candidate.id === id)!
+      const action = controller.start({
+        weapon,
+        targetRunId,
+        x: target.cx,
+        y: target.cy,
+        seed: 99,
+      })
+      action.charge = 1
+
+      weapon.charged!(world, action)
+      expect(target.attachedCount).toBe(initial)
+      if (invalidation === 'cancel') controller.cancel('system')
+      else targetRunId++
+
+      finishDelayedEffects(world.effects)
+      expect(target.attachedCount).toBe(initial)
+    }
+  )
 
   it('uses bounded ellipse dissolve damage for black hole and never detaches a fresh target', () => {
     const blackHole = elementalWeapons.find((weapon) => weapon.id === 'blackhole')!
