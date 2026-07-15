@@ -80,7 +80,7 @@ describe('damage patterns', () => {
   it('matches circles, lines, ellipses, and multi-point clusters', () => {
     expect(matchesPattern({ x: 5, y: 0 }, { kind: 'circle', x: 0, y: 0, radius: 6 })).toBe(true)
     expect(matchesPattern({ x: 5, y: 3 }, { kind: 'line', x1: 0, y1: 0, x2: 10, y2: 0, width: 4 })).toBe(false)
-    expect(matchesPattern({ x: 8, y: 2 }, { kind: 'ellipse', x: 0, y: 0, rx: 10, ry: 3, rotation: 0 })).toBe(true)
+    expect(matchesPattern({ x: 7, y: 2 }, { kind: 'ellipse', x: 0, y: 0, rx: 10, ry: 3, rotation: 0 })).toBe(true)
     expect(matchesPattern({ x: 20, y: 20 }, { kind: 'multi', points: [{ x: 20, y: 20 }], radius: 2 })).toBe(true)
   })
 
