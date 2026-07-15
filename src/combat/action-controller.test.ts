@@ -92,6 +92,7 @@ function harness() {
   let now = 1_000
   let seed = 99
   const settled = vi.fn()
+  const damaged = vi.fn()
   const warn = vi.fn()
   const controller = new ActionController({
     getTarget: () => target,
@@ -99,12 +100,14 @@ function harness() {
     now: () => now,
     nextSeed: () => seed,
     onSettled: settled,
+    onDamage: damaged,
     warn,
   })
 
   return {
     controller,
     settled,
+    damaged,
     warn,
     get target() {
       return target
@@ -178,6 +181,85 @@ describe('ActionController damage guard', () => {
     h.controller.cancel(reason)
 
     expect(action.damage(damageRequest(h.target))).toBeNull()
+  })
+
+  it('reports only the first successful damage result from a multi-request finisher action', () => {
+    const h = harness()
+    const world = makeWorld(h.target)
+    const weapon = makeWeapon({
+      quick: (_world, action) => {
+        action.damage(damageRequest(h.target))
+        action.damage({ ...damageRequest(h.target), finish: true })
+      },
+    })
+
+    h.controller.handle({ type: 'press', id: 1, x: 10, y: 20 }, weapon, world)
+    h.controller.handle({ type: 'tap', id: 1, x: 10, y: 20 }, weapon, world)
+
+    expect(h.damaged).toHaveBeenCalledTimes(1)
+    expect(h.damaged).toHaveBeenCalledWith(expect.objectContaining({
+      weaponId: weapon.id,
+      kind: 'quick',
+      damage: expect.objectContaining({ detached: 5 }),
+    }))
+  })
+
+  it.each<CancelReason>([
+    'next',
+    'reset',
+    'visibility',
+    'weaponChange',
+    'targetDestroyed',
+  ])('does not report delayed damage after %s cancellation', (reason) => {
+    const h = harness()
+    const world = makeWorld(h.target)
+    const weapon = makeWeapon({
+      mode: 'cinematic',
+      quick: (_world, action) => {
+        let elapsed = 0
+        world.effects.add({
+          update(dt) {
+            elapsed += dt
+            if (elapsed < 0.4) return true
+            action.damage(damageRequest(h.target))
+            return false
+          },
+          draw() {},
+        })
+      },
+    })
+
+    h.controller.handle({ type: 'press', id: 1, x: 10, y: 20 }, weapon, world)
+    h.controller.handle({ type: 'tap', id: 1, x: 10, y: 20 }, weapon, world)
+    h.controller.cancel(reason)
+    world.effects.update(1)
+
+    expect(h.damaged).not.toHaveBeenCalled()
+  })
+
+  it('reports one delayed successful damage after settlement', () => {
+    const h = harness()
+    const world = makeWorld(h.target)
+    const weapon = makeWeapon({
+      mode: 'cinematic',
+      quick: (_world, action) => {
+        world.effects.add({
+          update() {
+            action.damage(damageRequest(h.target))
+            return false
+          },
+          draw() {},
+        })
+      },
+    })
+
+    h.controller.handle({ type: 'press', id: 1, x: 10, y: 20 }, weapon, world)
+    h.controller.handle({ type: 'tap', id: 1, x: 10, y: 20 }, weapon, world)
+    expect(h.settled).toHaveBeenCalledTimes(1)
+    expect(h.damaged).not.toHaveBeenCalled()
+
+    world.effects.update(1)
+    expect(h.damaged).toHaveBeenCalledTimes(1)
   })
 })
 

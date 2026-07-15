@@ -49,6 +49,7 @@ interface ActorSequence {
 
 class CharacterActor implements Effect {
   readonly z = 2
+  readonly priority = 'essential'
   private sequence: ActorSequence | null = null
   active = false
 
@@ -421,7 +422,7 @@ export function runCharacterMove(
     actor = new CharacterActor()
     actors.set(world.effects, actor)
   }
-  const needsAdd = !actor.active
+  const needsAdd = !world.effects.has(actor)
   actor.play({
     elapsed: 0,
     move,

@@ -16,6 +16,7 @@ import type { DamagePattern, DamageResult } from '../combat/damage'
 import { ELEMENTAL_CHARGE, type ElementalWeaponId } from './charge-profiles'
 import type { Weapon, WeaponAction, World } from './weapon'
 import * as fx from './fx'
+import { rememberElementalPattern } from './pattern-memory'
 
 const EARTH = ['#7cc95a', '#4aa6e0', '#b07b4f', '#5fab3c', '#3b89c4']
 
@@ -91,7 +92,12 @@ function checkedDamage(
     min = Math.min(min, max)
   }
 
-  return action.damage({
+  const frame = {
+    x: world.target.cx,
+    y: world.target.cy,
+    radius: world.target.radius,
+  }
+  const result = action.damage({
     pattern,
     minRatio: min,
     maxRatio: max,
@@ -99,6 +105,8 @@ function checkedDamage(
     mode,
     finish: false,
   })
+  if (result && result.detached > 0) rememberElementalPattern(pattern, frame)
+  return result
 }
 
 function seedForLegacy(id: string, x: number, y: number, fragments: number): number {

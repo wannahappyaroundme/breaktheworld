@@ -4,4 +4,6 @@ export interface Effect {
   draw(ctx: CanvasRenderingContext2D): void
   /** lower draws first; default 0 */
   z?: number
+  /** Essential actors may replace the newest garnish when the pool is full. */
+  priority?: 'essential' | 'garnish'
 }

@@ -11,6 +11,7 @@ import type { Target } from '../targets/target'
 import { elementalWeapons } from './elemental'
 import { ELEMENTAL_CHARGE } from './charge-profiles'
 import type { WeaponAction, World } from './weapon'
+import { copyLastElementalPattern } from './pattern-memory'
 
 const createElement = vi.fn((tag: string) => {
   if (tag !== 'canvas') throw new Error(`Unexpected element: ${tag}`)
@@ -328,6 +329,38 @@ describe('elemental charge profiles', () => {
     })
     expect(h.target.detachAll).not.toHaveBeenCalled()
   })
+
+  it('remembers only a successful elemental pattern and ignores stale or zero damage', () => {
+    const context = {
+      x: 180,
+      y: 390,
+      targetX: 195,
+      targetY: 400,
+      targetRadius: 120,
+      seed: 81,
+    }
+    const laser = elementalWeapons.find((weapon) => weapon.id === 'laser')!
+    const successful = makeHarness()
+    laser.quick!(successful.world, successful.action)
+    expect(copyLastElementalPattern(context).kind).toBe('line')
+
+    const hammer = elementalWeapons.find((weapon) => weapon.id === 'hammer')!
+    const stale = makeHarness()
+    stale.action.damage = vi.fn(() => null)
+    hammer.quick!(stale.world, stale.action)
+    expect(copyLastElementalPattern(context).kind).toBe('line')
+
+    const zero = makeHarness()
+    zero.action.damage = vi.fn(() => ({
+      detached: 0,
+      before: 100,
+      remaining: 100,
+      initial: 100,
+      destroyed: false,
+    }))
+    hammer.quick!(zero.world, zero.action)
+    expect(copyLastElementalPattern(context).kind).toBe('line')
+  })
 })
 
 describe('Effects budget', () => {
@@ -341,5 +374,57 @@ describe('Effects budget', () => {
     expect(effects.activeCount).toBe(24)
     effects.update(0.016)
     expect(update).toHaveBeenCalledTimes(24)
+  })
+
+  it('tracks pending effects and forgets active and pending registrations on clear', () => {
+    const effects = new Effects()
+    const child: Effect = { update: () => true, draw: vi.fn() }
+    let pendingWasRegistered = false
+    const parent: Effect = {
+      update: () => {
+        effects.add(child)
+        pendingWasRegistered = effects.has(child)
+        return false
+      },
+      draw: vi.fn(),
+    }
+
+    effects.add(parent)
+    expect(effects.has(parent)).toBe(true)
+    effects.update(0.016)
+    expect(pendingWasRegistered).toBe(true)
+    expect(effects.has(parent)).toBe(false)
+    expect(effects.has(child)).toBe(true)
+
+    effects.clear()
+    expect(effects.has(child)).toBe(false)
+    expect(effects.activeCount).toBe(0)
+  })
+
+  it('evicts the newest garnish for a new essential effect without evicting essentials', () => {
+    const effects = new Effects()
+    const existingEssential: Effect = {
+      priority: 'essential',
+      update: () => true,
+      draw: vi.fn(),
+    }
+    effects.add(existingEssential)
+    const garnishes = Array.from({ length: 23 }, (): Effect => ({
+      update: () => true,
+      draw: vi.fn(),
+    }))
+    for (const garnish of garnishes) effects.add(garnish)
+    const replacementEssential: Effect = {
+      priority: 'essential',
+      update: () => true,
+      draw: vi.fn(),
+    }
+
+    expect(effects.add(replacementEssential)).toBe(true)
+
+    expect(effects.activeCount).toBe(24)
+    expect(effects.has(existingEssential)).toBe(true)
+    expect(effects.has(replacementEssential)).toBe(true)
+    expect(effects.has(garnishes[garnishes.length - 1])).toBe(false)
   })
 })

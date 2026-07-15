@@ -2,6 +2,7 @@ import type { DamagePattern } from '../combat/damage'
 import type { Sfx } from '../engine/audio'
 import { Rng } from '../engine/rng'
 import type { AssetName } from '../art/assets'
+import { copyLastElementalPattern } from './pattern-memory'
 
 export const CHARACTER_MOVE_IDS = {
   cinnamoroll: ['cloudBounce', 'earSweep', 'skyPress'],
@@ -335,7 +336,7 @@ export const CHARACTER_MOVE_SETS: Record<CharacterId, CharacterMoveSet> = {
     ],
     charged: charged({
       id: 'copySmash', name: '만능변신 강타', damage: { min: 0.62, max: 0.75 },
-      buildPattern: (c) => ({ kind: 'ellipse', x: c.targetX, y: c.targetY, rx: c.targetRadius, ry: c.targetRadius * 0.82, rotation: 0 }),
+      buildPattern: (c) => copyLastElementalPattern(c),
       telegraphColor: '#b88bd9', detachMode: 'squash', sfx: 'bigboom', emojis: ['🟣', '🔨', '✨'],
       duration: 1.04, impactAt: 0.54, visual: 'copy',
     }),

@@ -88,7 +88,7 @@ export class Game {
     this.controller = new ActionController({
       getTarget: () => this.manager.current,
       getTargetRunId: () => this.manager.targetRunId,
-      onSettled: () => this.addCombo(),
+      onDamage: () => this.addCombo(),
     })
     this.chargeVisual = new ChargeVisual(
       window.matchMedia('(prefers-reduced-motion: reduce)').matches

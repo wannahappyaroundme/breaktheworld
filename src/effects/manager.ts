@@ -9,6 +9,8 @@ export class Effects {
   private pendingBelow: Effect[] = []
   private pendingAbove: Effect[] = []
   private updating = false
+  private insertionOrder = new WeakMap<Effect, number>()
+  private nextInsertionOrder = 0
 
   get activeCount(): number {
     return (
@@ -19,10 +21,22 @@ export class Effects {
     )
   }
 
+  has(effect: Effect): boolean {
+    return (
+      this.below.includes(effect) ||
+      this.above.includes(effect) ||
+      this.pendingBelow.includes(effect) ||
+      this.pendingAbove.includes(effect)
+    )
+  }
+
   add(e: Effect): boolean {
     // Particles have their own pool. Preserve every effect already on screen and
-    // drop only the newest overflow garnish, so cinematics are never torn down.
-    if (this.activeCount >= MAX_ACTIVE_EFFECTS) return false
+    // let essential actors replace only the newest garnish at saturation.
+    if (this.activeCount >= MAX_ACTIVE_EFFECTS) {
+      if (e.priority !== 'essential' || !this.evictNewestGarnish()) return false
+    }
+    this.insertionOrder.set(e, ++this.nextInsertionOrder)
     if ((e.z ?? 0) < 0) {
       const destination = this.updating ? this.pendingBelow : this.below
       destination.push(e)
@@ -30,6 +44,30 @@ export class Effects {
       const destination = this.updating ? this.pendingAbove : this.above
       destination.push(e)
     }
+    return true
+  }
+
+  private evictNewestGarnish(): boolean {
+    const collections = [this.below, this.above, this.pendingBelow, this.pendingAbove]
+    let newestCollection: Effect[] | null = null
+    let newestIndex = -1
+    let newestOrder = Number.NEGATIVE_INFINITY
+
+    for (const collection of collections) {
+      for (let index = 0; index < collection.length; index++) {
+        const effect = collection[index]
+        if (effect.priority === 'essential') continue
+        const order = this.insertionOrder.get(effect) ?? Number.NEGATIVE_INFINITY
+        if (order > newestOrder) {
+          newestCollection = collection
+          newestIndex = index
+          newestOrder = order
+        }
+      }
+    }
+
+    if (!newestCollection || newestIndex < 0) return false
+    newestCollection.splice(newestIndex, 1)
     return true
   }
 
@@ -59,5 +97,7 @@ export class Effects {
     this.above = []
     this.pendingBelow = []
     this.pendingAbove = []
+    this.insertionOrder = new WeakMap()
+    this.nextInsertionOrder = 0
   }
 }

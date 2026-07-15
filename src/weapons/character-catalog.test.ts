@@ -16,6 +16,7 @@ import {
 import { runCharacterMove } from './character-runtime'
 import { characterWeapons } from './characters'
 import { CHARACTER_SKIN_ASSETS } from '../art/assets'
+import { elementalPatternMemory } from './pattern-memory'
 
 const EXPECTED_IDS = {
   cinnamoroll: ['cloudBounce', 'earSweep', 'skyPress'],
@@ -192,6 +193,25 @@ describe('character move catalog', () => {
     })
     expect(CHARACTER_SKIN_ASSETS.ditto).toEqual({ default: 'ditto', classic: 'dittoOld' })
   })
+
+  it('builds copySmash from the last successful elemental pattern', () => {
+    elementalPatternMemory.remember(
+      { kind: 'line', x1: 80, y1: 200, x2: 120, y2: 260, width: 12 },
+      { x: 100, y: 230, radius: 50 }
+    )
+    const pattern = CHARACTER_MOVE_SETS.ditto.charged.buildPattern({
+      x: 190,
+      y: 390,
+      targetX: 195,
+      targetY: 390,
+      targetRadius: 120,
+      w: 390,
+      h: 844,
+      seed: 19,
+    })
+
+    expect(pattern.kind).toBe('line')
+  })
 })
 
 describe('character runtime damage invariants', () => {
@@ -282,11 +302,13 @@ describe('character runtime damage invariants', () => {
       destroyed: false,
     }))
     world.target.applyDamage = applyDamage
+    const onDamage = vi.fn()
     const controller = new ActionController({
       getTarget: () => world.target,
       getTargetRunId: () => 700,
       nextSeed: () => 99,
       now: () => 1_000,
+      onDamage,
     })
     const weapon = characterWeapons[0]
 
@@ -296,7 +318,31 @@ describe('character runtime damage invariants', () => {
 
     settle(world)
     expect(applyDamage).toHaveBeenCalledTimes(1)
+    expect(onDamage).toHaveBeenCalledTimes(1)
   })
+
+  it.each(['next', 'reset', 'visibility', 'weaponChange', 'targetDestroyed'] as const)(
+    'does not report delayed character damage after %s cancellation',
+    (reason) => {
+      const world = makeWorld(40)
+      const onDamage = vi.fn()
+      const controller = new ActionController({
+        getTarget: () => world.target,
+        getTargetRunId: () => 710,
+        nextSeed: () => 101,
+        now: () => 1_000,
+        onDamage,
+      })
+      const weapon = characterWeapons[0]
+
+      controller.handle({ type: 'press', id: 1, x: 190, y: 390 }, weapon, world)
+      controller.handle({ type: 'tap', id: 1, x: 190, y: 390 }, weapon, world)
+      controller.cancel(reason)
+      settle(world)
+
+      expect(onDamage).not.toHaveBeenCalled()
+    }
+  )
 
   it('uses checked action damage at delayed impact without reading a later world target', () => {
     const set = CHARACTER_MOVE_SETS.ironman
@@ -324,5 +370,38 @@ describe('character runtime damage invariants', () => {
         expect(world.effects.activeCount).toBe(1)
       }
     }
+  })
+
+  it('registers the reusable actor again after effects are cleared', () => {
+    const set = CHARACTER_MOVE_SETS.cinnamoroll
+    const world = makeWorld(40)
+    const first = damageHarness(40, 110_001, 1)
+    runCharacterMove(world, first.action, set, set.quick[0], () => {})
+
+    world.effects.clear()
+
+    const second = damageHarness(40, 110_002, 2)
+    runCharacterMove(world, second.action, set, set.quick[1], () => {})
+    expect(second.requests).toHaveLength(0)
+    settle(world)
+    expect(second.requests).toHaveLength(1)
+  })
+
+  it('keeps a saturated character actor delayed by evicting a garnish', () => {
+    const set = CHARACTER_MOVE_SETS.ironman
+    const world = makeWorld(40)
+    for (let i = 0; i < 24; i++) {
+      world.effects.add({ update: () => true, draw() {} })
+    }
+    const damage = damageHarness(40, 120_001, 9)
+
+    runCharacterMove(world, damage.action, set, set.quick[0], () => {})
+
+    expect(world.effects.activeCount).toBe(24)
+    expect(damage.requests).toHaveLength(0)
+    world.effects.update(0.2)
+    expect(damage.requests).toHaveLength(0)
+    world.effects.update(0.2)
+    expect(damage.requests).toHaveLength(1)
   })
 })

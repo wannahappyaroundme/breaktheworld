@@ -1,6 +1,7 @@
 import type { Target } from '../targets/target'
 import type { Weapon, WeaponAction, World } from '../weapons/weapon'
 import type { GestureEvent } from './gesture'
+import type { DamageResult } from './damage'
 
 const COMBO_GRACE_MS = 200
 const CINEMATIC_MS = 1_200
@@ -32,6 +33,10 @@ export interface ActionResolution {
   charge: number
 }
 
+export interface ActionDamageResolution extends ActionResolution {
+  damage: DamageResult
+}
+
 export interface ChargeState {
   x: number
   y: number
@@ -47,6 +52,7 @@ export interface ActionControllerOptions {
   now?: () => number
   nextSeed?: () => number
   onSettled?: (resolution: ActionResolution) => void
+  onDamage?: (resolution: ActionDamageResolution) => void
   warn?: (message: string) => void
 }
 
@@ -63,6 +69,8 @@ interface ActiveAction {
   weapon: Weapon
   world?: World
   settled: boolean
+  kind: ActionKind
+  damageReported: boolean
 }
 
 function fallbackAccentColor(weaponId: string): string {
@@ -89,6 +97,7 @@ export class ActionController {
   private now: () => number
   private nextSeed: () => number
   private onSettled?: (resolution: ActionResolution) => void
+  private onDamage?: (resolution: ActionDamageResolution) => void
   private warn: (message: string) => void
 
   constructor(options: ActionControllerOptions) {
@@ -97,6 +106,7 @@ export class ActionController {
     this.now = options.now ?? (() => performance.now())
     this.nextSeed = options.nextSeed ?? (() => Math.floor(Math.random() * 0x1_0000_0000))
     this.onSettled = options.onSettled
+    this.onDamage = options.onDamage
     this.warn = options.warn ?? console.warn
   }
 
@@ -292,6 +302,7 @@ export class ActionController {
     const actionId = ++this.nextActionId
     if (!preserveExisting) this.validActionIds.clear()
     this.validActionIds.add(actionId)
+    let active: ActiveAction
     const action: WeaponAction = {
       actionId,
       targetRunId: input.targetRunId,
@@ -302,10 +313,29 @@ export class ActionController {
       damage: (request) => {
         if (!this.validActionIds.has(actionId)) return null
         if (this.getTargetRunId() !== input.targetRunId) return null
-        return this.getTarget().applyDamage({ ...request, seed: input.seed })
+        const result = this.getTarget().applyDamage({ ...request, seed: input.seed })
+        if (result.detached > 0 && !active.damageReported) {
+          active.damageReported = true
+          this.onDamage?.({
+            actionId,
+            targetRunId: input.targetRunId,
+            weaponId: input.weapon.id,
+            kind: active.kind,
+            charge: action.charge,
+            damage: result,
+          })
+        }
+        return result
       },
     }
-    const active = { action, weapon: input.weapon, world, settled: false }
+    active = {
+      action,
+      weapon: input.weapon,
+      world,
+      settled: false,
+      kind: 'quick',
+      damageReported: false,
+    }
     if (updateController) {
       this.active = active
       this.currentState = state
@@ -339,6 +369,7 @@ export class ActionController {
     active.action.x = x
     active.action.y = y
     active.action.charge = charge
+    active.kind = kind
     if (!preserveController) {
       this.active = active
       this.currentCharge = null
