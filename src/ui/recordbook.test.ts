@@ -446,6 +446,7 @@ describe('Hud record button and live notification renderer', () => {
     }, { scheduler })
 
     const buttons = parent.querySelector('.top-buttons')!.querySelectorAll('button')
+    expect(parent.querySelector('.combo')!.querySelector('.label')!.textContent).toBe('연속')
     expect(buttons).toHaveLength(5)
     expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
       '기록 카드 공유', '기록책 열기', '소리 끄기', '다음 타겟', '처음부터',
@@ -483,5 +484,15 @@ describe('Hud record button and live notification renderer', () => {
     expect(parent.querySelectorAll('.grade-flash')).toHaveLength(0)
     expect(parent.querySelectorAll('.celebrate-popup')).toHaveLength(0)
     expect(parent.querySelectorAll('.toast')).toHaveLength(0)
+  })
+
+  it('keeps the HUD notice transparent to game taps at UI-child specificity', async () => {
+    const { readFileSync } = await vi.importActual<{
+      readFileSync(path: URL, encoding: 'utf8'): string
+    }>('node:fs')
+    const styleCss = readFileSync(new URL('../style.css', import.meta.url), 'utf8')
+    expect(styleCss).toMatch(
+      /#ui\s*>\s*\.hud-notice\s*\{[^}]*pointer-events:\s*none\s*;/s
+    )
   })
 })

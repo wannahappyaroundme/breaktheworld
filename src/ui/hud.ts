@@ -55,7 +55,7 @@ export class Hud {
     this.comboBox.className = 'combo'
     this.comboN = span('n', '0')
     this.bestEl = span('best', '🏆 0')
-    this.comboBox.append(this.comboN, span('label', 'COMBO'), this.bestEl)
+    this.comboBox.append(this.comboN, span('label', '연속'), this.bestEl)
 
     const buttons = document.createElement('div')
     buttons.className = 'top-buttons'

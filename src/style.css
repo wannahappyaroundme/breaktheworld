@@ -313,6 +313,9 @@ body {
   visibility: hidden;
   transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
 }
+#ui > .hud-notice {
+  pointer-events: none;
+}
 .hud-notice.show {
   opacity: 1;
   visibility: visible;
