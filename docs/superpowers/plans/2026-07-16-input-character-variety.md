@@ -264,10 +264,12 @@ Test that a tap settles once, duplicate release is ignored, a stale target run r
 
 ```ts
 const ctx = controller.start({ weapon, targetRunId: 7, x: 10, y: 20, seed: 99 })
-manager.advanceForTest()
+currentTargetRunId = 8
 expect(ctx.damage(request)).toBeNull()
 expect(target.applyDamage).not.toHaveBeenCalled()
 ```
+
+Inject `getTargetRunId()` and `getTarget()` into the controller test harness. Do not add test-only methods to `TargetManager` or any other production class.
 
 - [ ] **Step 2: Run and confirm missing controller failure**
 
@@ -305,7 +307,7 @@ Remove `cooldown` now. Keep `apply` and the three new handlers optional only as 
 
 - [ ] **Step 4: Add `targetRunId` to TargetManager**
 
-Start at `1` and increment on every `advance()` and `reset()`. Expose a readonly getter. Add a manager test proving monotonic IDs and that reset invalidates an active action even if it returns to the first target type.
+Start at `1` and increment once on every target replacement, including replacements caused by `advance()` and `reset()`. Expose a readonly getter. Add a manager test using public `skip()` plus `update()` and `reset()` to prove monotonic IDs and that reset invalidates an active action even if it returns to the first target type.
 
 - [ ] **Step 5: Wire the controller into Game**
 
