@@ -19,6 +19,12 @@ export type AssetName =
   | 'cinnamorollOld'
   | 'dittoOld'
 
+/** Old personal artwork remains available as a skin without creating extra weapons. */
+export const CHARACTER_SKIN_ASSETS = {
+  cinnamoroll: { default: 'cinnamoroll', classic: 'cinnamorollOld' },
+  ditto: { default: 'ditto', classic: 'dittoOld' },
+} as const satisfies Record<string, { default: AssetName; classic: AssetName }>
+
 const FILES: Record<AssetName, string> = {
   earth: 'earth.png',
   city: 'city.png',
