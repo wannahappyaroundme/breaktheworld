@@ -11,6 +11,26 @@ export interface PointerHit {
 export type HitHandler = (hit: PointerHit) => void
 export type GestureHandler = (event: GestureEvent) => void
 
+type InputHandlerArgs = [onHit: HitHandler] | [onGesture: GestureHandler, mode: 'gesture']
+
+export function createInputForwarder(onHit: HitHandler): GestureHandler
+export function createInputForwarder(
+  onGesture: GestureHandler,
+  mode: 'gesture'
+): GestureHandler
+export function createInputForwarder(...args: InputHandlerArgs): GestureHandler {
+  if (args.length === 2) return args[0]
+
+  const onHit = args[0]
+  return (event) => {
+    if (event.type === 'tap' || event.type === 'chargeRelease') {
+      onHit({ id: event.id, x: event.x, y: event.y, phase: 'down' })
+    } else if (event.type === 'dragStart' || event.type === 'drag') {
+      onHit({ id: event.id, x: event.x, y: event.y, phase: 'drag' })
+    }
+  }
+}
+
 /** Maps browser PointerEvents to DOM-free gesture events. */
 export class Input {
   private machine = new GestureMachine()
@@ -18,9 +38,12 @@ export class Input {
 
   /** Temporary Task 2 compatibility overload; Task 3 removes PointerHit. */
   constructor(el: HTMLElement, onHit: HitHandler)
-  constructor(el: HTMLElement, onGesture: GestureHandler)
-  constructor(el: HTMLElement, handler: HitHandler | GestureHandler) {
-    this.onGesture = handler as GestureHandler
+  constructor(el: HTMLElement, onGesture: GestureHandler, mode: 'gesture')
+  constructor(el: HTMLElement, ...args: InputHandlerArgs) {
+    this.onGesture =
+      args.length === 2
+        ? createInputForwarder(args[0], args[1])
+        : createInputForwarder(args[0])
     this.attach(el)
   }
 
