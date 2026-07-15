@@ -14,7 +14,7 @@ import {
   type CharacterMove,
 } from './character-catalog'
 import { runCharacterMove } from './character-runtime'
-import { characterWeapons } from './characters'
+import { characterWeapons, createCharacterWeapons } from './characters'
 import {
   CHARACTER_SKINS,
   preloadAssets,
@@ -194,6 +194,40 @@ describe('character move catalog', () => {
       }
       expect(set.charged.id).toBe(EXPECTED_IDS[set.id][2])
     }
+  })
+
+  it('uses shared deterministic safe quick and charged profiles when variants are disabled', () => {
+    const roster = createCharacterWeapons(() => 'default', () => false)
+    const quickRatios = new Set<string>()
+    const chargedRatios = new Set<string>()
+
+    for (const weapon of roster) {
+      const firstWorld = makeWorld(40)
+      const first = damageHarness(40, 130_000 + quickRatios.size * 10, 1)
+      weapon.quick(firstWorld, first.action)
+      settle(firstWorld)
+
+      const secondWorld = makeWorld(40)
+      const second = damageHarness(40, 140_000 + quickRatios.size * 10, 999_999)
+      weapon.quick(secondWorld, second.action)
+      settle(secondWorld)
+
+      const chargedWorld = makeWorld(40)
+      const charged = damageHarness(40, 150_000 + chargedRatios.size * 10, 27)
+      weapon.charged(chargedWorld, charged.action)
+      settle(chargedWorld)
+
+      expect(second.action.moveId).toBe(first.action.moveId)
+      quickRatios.add(`${first.requests[0].minRatio}:${first.requests[0].maxRatio}`)
+      chargedRatios.add(`${charged.requests[0].minRatio}:${charged.requests[0].maxRatio}`)
+      expect(first.remaining()).toBeGreaterThan(0)
+      expect(charged.remaining()).toBeGreaterThan(0)
+      expect(first.requests[0].finish).toBe(false)
+      expect(charged.requests[0].finish).toBe(false)
+    }
+
+    expect(quickRatios).toEqual(new Set(['0.35:0.45']))
+    expect(chargedRatios).toEqual(new Set(['0.55:0.68']))
   })
 
   it('keeps the previous Cinnamoroll and Ditto art in an ordered skin catalog', () => {

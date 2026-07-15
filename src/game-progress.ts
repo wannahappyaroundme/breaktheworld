@@ -64,6 +64,10 @@ export interface ProgressDispatchResult {
   state: ProgressStateV1
 }
 
+export interface ProgressDispatchOptions {
+  gamificationEnabled?: boolean
+}
+
 function isSettlementEvent(event: GameEvent): event is Extract<GameEvent, {
   actionId: number
   targetRunId: number
@@ -156,8 +160,10 @@ export class GameProgressCoordinator {
 
   dispatch(
     events: readonly GameEvent[],
-    reason?: CheckpointReason
+    reason?: CheckpointReason,
+    options: ProgressDispatchOptions = {}
   ): ProgressDispatchResult {
+    const gamificationEnabled = options.gamificationEnabled !== false
     let accepted = 0
     const notices: NotificationInput[] = []
 
@@ -168,7 +174,17 @@ export class GameProgressCoordinator {
 
       const previous = this.state
       let next = reduceProgress(previous, event, this.catalog)
-      const unlocked = unlockAchievements(next, this.nowIso())
+      if (!gamificationEnabled) {
+        next = {
+          ...next,
+          lifetime: { ...next.lifetime, stamps: previous.lifetime.stamps },
+          daily: previous.daily,
+          achievements: previous.achievements,
+        }
+      }
+      const unlocked = gamificationEnabled
+        ? unlockAchievements(next, this.nowIso())
+        : { state: next, unlockedIds: [] }
       next = unlocked.state
       this.state = next
       accepted += 1
@@ -183,8 +199,10 @@ export class GameProgressCoordinator {
           text: `새 도장: ${achievement.name}`,
         })
       }
-      for (const transition of dailyNoticeTransitions(previous.daily, next.daily)) {
-        notices.push(this.dailyNotice(transition))
+      if (gamificationEnabled) {
+        for (const transition of dailyNoticeTransitions(previous.daily, next.daily)) {
+          notices.push(this.dailyNotice(transition))
+        }
       }
       this.track(event)
     }

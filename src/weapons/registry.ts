@@ -1,11 +1,15 @@
 import type { Weapon } from './weapon'
 import { elementalWeapons } from './elemental'
 import { createCharacterWeapons } from './characters'
+import type { CharacterVariantsGetter } from './characters'
 import type { CharacterSkinGetter } from '../art/assets'
 
 /** Full ordered roster: 12 elemental + 9 character = 21 weapons. */
-export function createWeaponRoster(getSelectedSkin?: CharacterSkinGetter): Weapon[] {
-  return [...elementalWeapons, ...createCharacterWeapons(getSelectedSkin)]
+export function createWeaponRoster(
+  getSelectedSkin?: CharacterSkinGetter,
+  getVariantsEnabled?: CharacterVariantsGetter
+): Weapon[] {
+  return [...elementalWeapons, ...createCharacterWeapons(getSelectedSkin, getVariantsEnabled)]
 }
 
 export const weapons: Weapon[] = createWeaponRoster()

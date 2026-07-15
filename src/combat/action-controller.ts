@@ -140,6 +140,12 @@ export class ActionController {
     return this.strongInput
   }
 
+  get hasUnsettledAction(): boolean {
+    if (this.pendingTap !== null) return true
+    if (this.active !== null && !this.active.settled) return true
+    return Array.from(this.gestures.values()).some((gesture) => !gesture.settled)
+  }
+
   setStrongInput(mode: StrongInputMode): void {
     if (mode === this.strongInput) return
     this.cancel('settingsMode')

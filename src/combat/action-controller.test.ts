@@ -329,6 +329,25 @@ describe('ActionController damage guard', () => {
 })
 
 describe('ActionController gesture settlement', () => {
+  it('reports whether an input action is still waiting to settle', () => {
+    const h = harness()
+    const world = makeWorld(h.target)
+    const weapon = makeWeapon()
+
+    expect(h.controller.hasUnsettledAction).toBe(false)
+    h.controller.handle({ type: 'press', id: 1, x: 10, y: 20 }, weapon, world)
+    expect(h.controller.hasUnsettledAction).toBe(true)
+    h.controller.handle({ type: 'tap', id: 1, x: 10, y: 20 }, weapon, world)
+    expect(h.controller.hasUnsettledAction).toBe(false)
+
+    const doubleTap = harness('doubleTap')
+    const doubleWorld = makeWorld(doubleTap.target)
+    completeTap(doubleTap, weapon, doubleWorld, 2, 10, 20)
+    expect(doubleTap.controller.hasUnsettledAction).toBe(true)
+    doubleTap.controller.cancel('system')
+    expect(doubleTap.controller.hasUnsettledAction).toBe(false)
+  })
+
   it('runs a checked system quick action through the same damage guard', () => {
     const h = harness()
     const world = makeWorld(h.target)

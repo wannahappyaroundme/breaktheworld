@@ -21,6 +21,7 @@ import {
 import {
   CHARACTER_MOVE_SETS,
   pickQuickMove,
+  type CharacterMove,
   type CharacterMoveSet,
 } from './character-catalog'
 import { CHARACTER_IDS, type CharacterId } from './character-ids'
@@ -65,6 +66,30 @@ const FALLBACK_DRAWERS: Record<CharacterId, CharacterDrawer> = {
 
 const quickHistory = new Map<CharacterId, string[]>()
 
+export type CharacterVariantsGetter = () => boolean
+
+const SHARED_SAFE_QUICK = {
+  damage: { min: 0.35, max: 0.45 },
+  duration: 0.68,
+  impactAt: 0.48,
+} as const
+
+const SHARED_SAFE_CHARGED = {
+  damage: { min: 0.55, max: 0.68 },
+  duration: 1,
+  impactAt: 0.62,
+} as const
+
+function sharedSafeMove(move: CharacterMove): CharacterMove {
+  const profile = move.kind === 'charged' ? SHARED_SAFE_CHARGED : SHARED_SAFE_QUICK
+  return {
+    ...move,
+    damage: { ...profile.damage },
+    duration: profile.duration,
+    impactAt: profile.impactAt,
+  }
+}
+
 function executeQuick(
   world: World,
   action: WeaponAction,
@@ -81,7 +106,8 @@ function executeQuick(
 
 function createCharacterWeapon(
   set: CharacterMoveSet,
-  getSelectedSkin: CharacterSkinGetter
+  getSelectedSkin: CharacterSkinGetter,
+  getVariantsEnabled: CharacterVariantsGetter
 ): Weapon {
   const drawer = characterDrawer(set, getSelectedSkin, FALLBACK_DRAWERS[set.id])
   return {
@@ -90,19 +116,39 @@ function createCharacterWeapon(
     icon: set.icon,
     accentColor: set.accentColor,
     mode: 'cinematic',
-    quick: (world, action) => executeQuick(world, action, set, drawer),
-    drag: (world, action) => executeQuick(world, action, set, drawer),
+    quick: (world, action) => {
+      if (getVariantsEnabled()) executeQuick(world, action, set, drawer)
+      else {
+        const move = sharedSafeMove(set.quick[0])
+        action.moveId = move.id
+        runCharacterMove(world, action, set, move, drawer)
+      }
+    },
+    drag: (world, action) => {
+      if (getVariantsEnabled()) executeQuick(world, action, set, drawer)
+      else {
+        const move = sharedSafeMove(set.quick[0])
+        action.moveId = move.id
+        runCharacterMove(world, action, set, move, drawer)
+      }
+    },
     charged: (world, action) => {
-      action.moveId = set.charged.id
-      runCharacterMove(world, action, set, set.charged, drawer)
+      const move = getVariantsEnabled() ? set.charged : sharedSafeMove(set.charged)
+      action.moveId = move.id
+      runCharacterMove(world, action, set, move, drawer)
     },
   }
 }
 
 export function createCharacterWeapons(
-  getSelectedSkin: CharacterSkinGetter = () => 'default'
+  getSelectedSkin: CharacterSkinGetter = () => 'default',
+  getVariantsEnabled: CharacterVariantsGetter = () => true
 ): Weapon[] {
-  return CHARACTER_IDS.map((id) => createCharacterWeapon(CHARACTER_MOVE_SETS[id], getSelectedSkin))
+  return CHARACTER_IDS.map((id) => createCharacterWeapon(
+    CHARACTER_MOVE_SETS[id],
+    getSelectedSkin,
+    getVariantsEnabled
+  ))
 }
 
 export const characterWeapons: Weapon[] = createCharacterWeapons()

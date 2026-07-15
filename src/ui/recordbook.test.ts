@@ -408,6 +408,27 @@ describe('RecordBook', () => {
     expect(fakeDocument.activeElement?.getAttribute('data-skin')).toBe('cinnamoroll:classic')
   })
 
+  it('moves focus to the visible close button before hiding gamification sections', () => {
+    const parent = fakeDocument.createElement('div')
+    const recordBook = new RecordBook(
+      parent as unknown as HTMLElement,
+      view,
+      settings,
+      { onTitleChange: vi.fn(), onSkinChange: vi.fn(), onSettingChange: vi.fn() }
+    )
+    recordBook.open()
+    byAttribute(parent, 'data-title', '첫 와장창').focus()
+
+    recordBook.setGamificationVisible(false)
+
+    const gamificationSections = parent.querySelectorAll('[data-recordbook-section]')
+      .filter((section) => ['오늘의 도전', '부순 기록'].includes(
+        section.getAttribute('data-recordbook-section') ?? ''
+      ))
+    expect(gamificationSections.every((section) => section.hidden)).toBe(true)
+    expect(fakeDocument.activeElement?.getAttribute('aria-label')).toBe('기록책 닫기')
+  })
+
   it('traps focus and closes by Escape or backdrop while returning focus', () => {
     const parent = fakeDocument.createElement('div')
     const opener = fakeDocument.createElement('button')

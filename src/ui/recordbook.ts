@@ -123,6 +123,21 @@ export class RecordBook {
     }
   }
 
+  setGamificationVisible(visible: boolean): void {
+    const sections = Array.from(
+      this.scroll.querySelectorAll<HTMLElement>('[data-recordbook-section]')
+    ).filter((section) => {
+      const name = section.getAttribute('data-recordbook-section')
+      return name === '오늘의 도전' || name === '부순 기록'
+    })
+    const active = this.doc.activeElement as HTMLElement | null
+    const hidesFocusedControl = !visible
+      && active !== null
+      && sections.some((section) => section.contains(active))
+    if (hidesFocusedControl && this.openState) this.closeButton.focus()
+    for (const section of sections) section.hidden = !visible
+  }
+
   open(): void {
     if (this.openState) return
     const active = this.doc.activeElement as HTMLElement | null

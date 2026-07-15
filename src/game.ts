@@ -39,6 +39,15 @@ import { ProgressStore, type CheckpointReason } from './progress/store'
 import { makeRecordBookView } from './progress/view-model'
 import { RecordBook } from './ui/recordbook'
 import type { RecordBookSettingChange, RecordBookSettingsState } from './ui/settings'
+import {
+  RemoteConfigOrchestrator,
+  type AnalyticsDisabledHook,
+  type FeatureFlags,
+} from './config/feature-flags'
+import type {
+  RemoteConfigResult,
+  RemoteQuestConfigProvider,
+} from './config/quest-provider'
 
 const COMBO_RESET_SEC = 1.6
 const GRADES: { n: number; label: string }[] = [
@@ -86,6 +95,7 @@ export class Game {
   private holdHint: OneTimeHoldHint
   private demoMode = false
   private destroyAttribution = new TargetDestroyAttribution()
+  private remoteConfig = new RemoteConfigOrchestrator()
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.renderer = new Renderer(canvas)
@@ -130,7 +140,10 @@ export class Game {
     })
     this.best = this.progress.state.lifetime.bestCombo
     this.totalTargets = this.progress.state.lifetime.totalTargets
-    this.weaponRoster = createWeaponRoster((characterId) => this.selectedCharacterSkin(characterId))
+    this.weaponRoster = createWeaponRoster(
+      (characterId) => this.selectedCharacterSkin(characterId),
+      () => this.remoteConfig.active.character_variants_enabled
+    )
     this.weapon = findWeapon(defaultWeaponId, this.weaponRoster)
     this.progressBridge = new GameplayProgressBridge({
       dispatch: (events, reason) => this.dispatch(events, reason),
@@ -157,7 +170,11 @@ export class Game {
         progressTargetId(this.manager.current.name),
         this.manager.current.isGolden
       ),
-      onSettled: (resolution) => this.progressBridge.onSettled(resolution),
+      onSettled: (resolution) => {
+        this.remoteConfig.rememberAction(resolution.actionId, resolution.targetRunId)
+        this.progressBridge.onSettled(resolution)
+        this.applyPendingRemoteConfig()
+      },
     })
     this.motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
     this.chargeVisual = new ChargeVisual(this.effectiveReducedMotion())
@@ -193,7 +210,10 @@ export class Game {
 
     this.input = new Input(canvas, (event) => this.onGesture(event), 'gesture')
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden) this.controller.cancel('visibility')
+      if (document.hidden) {
+        this.controller.cancel('visibility')
+        this.applyPendingRemoteConfig()
+      }
     })
     window.addEventListener('pagehide', () => this.progress.checkpoint('pagehide'))
     window.addEventListener('resize', () =>
@@ -207,6 +227,25 @@ export class Game {
     if (location.search.includes('fever')) {
       window.setTimeout(() => this.enterFever('system'), 700)
     }
+  }
+
+  /** Loads optional operations data after the first playable frame and never rejects into boot. */
+  async loadRemoteConfig(
+    provider: Pick<RemoteQuestConfigProvider, 'loadConfig'>
+  ): Promise<RemoteConfigResult['source']> {
+    try {
+      const result = await provider.loadConfig()
+      this.remoteConfig.stage(result)
+      this.applyPendingRemoteConfig()
+      return result.source
+    } catch {
+      return 'builtIn'
+    }
+  }
+
+  /** Task 4 can attach its queue stop-and-clear boundary without coupling gameplay to analytics. */
+  setAnalyticsDisabledHook(hook: AnalyticsDisabledHook): void {
+    this.remoteConfig.setAnalyticsDisabledHook(hook)
   }
 
   /** Auto-fire a weapon around the target (for screenshots/demos: ?demo or ?demo=thanos). */
@@ -244,7 +283,7 @@ export class Game {
   /** The only gameplay entry that may reduce progress or emit gameplay analytics. */
   private dispatch(events: readonly GameEvent[], reason?: CheckpointReason): void {
     const previousTotal = this.progress.state.lifetime.totalTargets
-    const result = this.progress.dispatch(events, reason)
+    const result = this.reduceProgress(events, reason)
     if (result.accepted === 0) return
     this.refreshProgressUI()
     if (
@@ -253,6 +292,13 @@ export class Game {
     ) {
       this.hud.toast(`🎉 ${this.progress.state.lifetime.totalTargets}번째 파괴 달성!`)
     }
+  }
+
+  /** Central feature gate for gameplay and settings checkpoints. */
+  private reduceProgress(events: readonly GameEvent[], reason?: CheckpointReason) {
+    return this.progress.dispatch(events, reason, {
+      gamificationEnabled: this.gamificationFor(events),
+    })
   }
 
   private settingsState(): RecordBookSettingsState {
@@ -272,14 +318,35 @@ export class Game {
       makeRecordBookView(this.progress.state, this.progress.questCatalog),
       this.settingsState()
     )
+    this.applyGamificationVisibility()
+  }
+
+  private applyGamificationVisibility(): void {
+    this.recordBook.setGamificationVisible(this.remoteConfig.active.gamification_enabled)
+  }
+
+  private applyPendingRemoteConfig(): void {
+    this.remoteConfig.applyIfSettled(this.controller.hasUnsettledAction, {
+      applyCatalog: (catalog) => { this.progress.setCatalog(catalog) },
+      onFlagsApplied: (flags) => this.applyRemoteFlags(flags),
+    })
+  }
+
+  private gamificationFor(events: readonly GameEvent[]): boolean {
+    return this.remoteConfig.gamificationFor(events)
+  }
+
+  private applyRemoteFlags(_flags: FeatureFlags): void {
+    this.refreshProgressUI()
   }
 
   private changeSetting(change: RecordBookSettingChange): void {
-    const result = this.progress.dispatch([{ type: 'SETTING_CHANGED', ...change }], 'setting')
+    const result = this.reduceProgress([{ type: 'SETTING_CHANGED', ...change }], 'setting')
     if (result.accepted === 0) return
     if (change.key === 'strongInput') this.controller.setStrongInput(change.value)
     if (change.key === 'reducedMotion') this.applyMotionSetting()
     this.refreshProgressUI()
+    this.applyPendingRemoteConfig()
   }
 
   private effectiveReducedMotion(): boolean {
@@ -294,6 +361,7 @@ export class Game {
 
   private selectWeapon(w: Weapon): void {
     this.controller.cancel('weaponChange')
+    this.applyPendingRemoteConfig()
     this.weapon = w
     this.bar.select(w.id)
     this.hud.flashWeapon(w.name)
@@ -318,6 +386,7 @@ export class Game {
       this.holdHint.hideInitial()
     }
     this.controller.handle(event, this.weapon, this.world())
+    this.applyPendingRemoteConfig()
   }
 
   private haptic(pattern: number | number[]): void {
@@ -370,6 +439,7 @@ export class Game {
     const targetRunId = this.manager.targetRunId
     const attributedToUser = this.destroyAttribution.consume(targetRunId)
     this.controller.cancel('targetDestroyed')
+    this.applyPendingRemoteConfig()
     this.celebrate(t, attributedToUser)
   }
 
@@ -519,6 +589,7 @@ export class Game {
 
   private onReset = (): void => {
     this.controller.cancel('reset')
+    this.applyPendingRemoteConfig()
     this.destroyAttribution.clear()
     this.manager.reset(this.renderer.width, this.renderer.height)
     this.combo = 0
@@ -530,6 +601,7 @@ export class Game {
 
   private onNext = (): void => {
     this.controller.cancel('next')
+    this.applyPendingRemoteConfig()
     this.destroyAttribution.clear()
     this.manager.skip(this.renderer.width, this.renderer.height)
   }
@@ -549,8 +621,11 @@ export class Game {
         url: location.href.split('?')[0],
         title: this.progress.state.profile.selectedTitle,
         stampFrame: (
-          this.progress.state.lifetime.stamps > 0
-          || Object.keys(this.progress.state.achievements).length > 0
+          this.remoteConfig.active.gamification_enabled
+          && (
+            this.progress.state.lifetime.stamps > 0
+            || Object.keys(this.progress.state.achievements).length > 0
+          )
         ),
       },
       (m) => this.hud.toast(m)

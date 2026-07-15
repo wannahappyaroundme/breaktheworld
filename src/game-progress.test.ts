@@ -101,6 +101,53 @@ describe('GameProgressCoordinator', () => {
     expect(notify.mock.calls.map(([notice]) => notice.kind)).toEqual(['achievement', 'quest'])
   })
 
+  it('keeps lifetime and settings while gamification is disabled without daily, stamps, achievements, or notices', () => {
+    const { progress, store, notify } = coordinator()
+    const initialDaily = structuredClone(progress.state.daily)
+
+    const result = progress.dispatch(actionEvents(), 'targetDestroy', {
+      gamificationEnabled: false,
+    })
+    progress.dispatch([{
+      type: 'SETTING_CHANGED',
+      key: 'haptics',
+      value: false,
+    }], 'setting', { gamificationEnabled: false })
+
+    expect(result.accepted).toBe(4)
+    expect(progress.state.lifetime).toMatchObject({
+      validHits: 1,
+      totalTargets: 1,
+      bestCombo: 1,
+      stamps: 0,
+    })
+    expect(progress.state.byWeapon.hammer).toMatchObject({ uses: 1, finishes: 1 })
+    expect(progress.state.profile.haptics).toBe(false)
+    expect(progress.state.daily).toEqual(initialDaily)
+    expect(progress.state.achievements).toEqual({})
+    expect(notify).not.toHaveBeenCalled()
+    expect(store.saves.map((save) => save.reason)).toEqual(['targetDestroy', 'setting'])
+  })
+
+  it('does not unlock already-qualified records from a setting-only checkpoint while gamification is disabled', () => {
+    const state = createDefaultProgress('seed')
+    state.lifetime.totalTargets = 1
+    const { progress, store, notify } = coordinator({ state })
+    const initialDaily = structuredClone(progress.state.daily)
+
+    progress.dispatch([{
+      type: 'SETTING_CHANGED',
+      key: 'reducedMotion',
+      value: true,
+    }], 'setting', { gamificationEnabled: false })
+
+    expect(progress.state.profile.reducedMotion).toBe(true)
+    expect(progress.state.achievements.first_destroy).toBeUndefined()
+    expect(progress.state.daily).toEqual(initialDaily)
+    expect(notify).not.toHaveBeenCalled()
+    expect(store.saves).toHaveLength(1)
+  })
+
   it('rejects duplicate settlement ids without double progress, analytics, or checkpoint', () => {
     const track = vi.fn()
     const { progress, store } = coordinator({ analytics: { track } })
