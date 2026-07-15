@@ -101,26 +101,52 @@ function damageRequest(target: Breakable, overrides: Partial<DamageRequest> = {}
   }
 }
 
+function attachedCentroids(target: Breakable): string[] {
+  const count = target.attachedCount
+  if (count === 0) return []
+  let index = 0
+  const random = vi.spyOn(Math, 'random').mockImplementation(() => (index++ + 0.5) / count)
+  try {
+    return target
+      .sampleAttached(count)
+      .map(({ x, y }) => `${x},${y}`)
+      .sort()
+  } finally {
+    random.mockRestore()
+  }
+}
+
+function damageIdentities(seed: number) {
+  const target = makeBreakable(24)
+  const initial = attachedCentroids(target)
+  const result = target.applyDamage(damageRequest(target, { seed }))
+  const survivors = attachedCentroids(target)
+  const survivorSet = new Set(survivors)
+  const detached = initial.filter((centroid) => !survivorSet.has(centroid))
+  return { result, survivors, detached }
+}
+
 describe('Breakable damage', () => {
-  it('produces the same damage sequence for the same seed', () => {
-    const a = makeBreakable(24)
-    const b = makeBreakable(24)
+  it('selects the same survivor and detached fragment identities for the same seed', () => {
+    const a = damageIdentities(99)
+    const b = damageIdentities(99)
 
-    expect(a.applyDamage(damageRequest(a))).toEqual(b.applyDamage(damageRequest(b)))
+    expect(a.result).toEqual(b.result)
+    expect(a.survivors).toEqual(b.survivors)
+    expect(a.detached).toEqual(b.detached)
+  })
 
-    const nextA = damageRequest(a, {
-      pattern: { kind: 'line', x1: a.cx, y1: a.cy - 60, x2: a.cx, y2: a.cy + 60, width: 12 },
-      minRatio: 0.05,
-      maxRatio: 0.5,
-      seed: 1234,
-    })
-    const nextB = damageRequest(b, {
-      pattern: { kind: 'line', x1: b.cx, y1: b.cy - 60, x2: b.cx, y2: b.cy + 60, width: 12 },
-      minRatio: 0.05,
-      maxRatio: 0.5,
-      seed: 1234,
-    })
-    expect(a.applyDamage(nextA)).toEqual(b.applyDamage(nextB))
+  it('varies fragment identities by seed without leaving the damage budget', () => {
+    const a = damageIdentities(99)
+    const b = damageIdentities(100)
+
+    for (const damage of [a, b]) {
+      expect(damage.result.detached).toBeGreaterThanOrEqual(6)
+      expect(damage.result.detached).toBeLessThanOrEqual(12)
+      expect(damage.detached).toHaveLength(damage.result.detached)
+    }
+    expect(a.survivors).not.toEqual(b.survivors)
+    expect(a.detached).not.toEqual(b.detached)
   })
 
   it('detaches at least one fragment even when the pattern misses', () => {
@@ -135,6 +161,36 @@ describe('Breakable damage', () => {
 
     expect(result.detached).toBe(1)
     expect(result.remaining).toBe(0)
+  })
+
+  it('keeps legacy takeDamage at zero when its circle misses every fragment', () => {
+    const target = makeBreakable(20)
+
+    expect(target.takeDamage(-1000, -1000, 1, 50)).toBe(0)
+    expect(target.attachedCount).toBe(20)
+  })
+
+  it('keeps legacy detachFraction at zero for a zero fraction', () => {
+    const target = makeBreakable(20)
+
+    expect(target.detachFraction(0)).toBe(0)
+    expect(target.attachedCount).toBe(20)
+  })
+
+  it('keeps legacy detachFraction at zero when its rounded count is zero', () => {
+    const target = makeBreakable(1)
+
+    expect(target.detachFraction(0.5)).toBe(0)
+    expect(target.attachedCount).toBe(1)
+  })
+
+  it('keeps every legacy wrapper at zero after the target is empty', () => {
+    const target = makeBreakable(20)
+    target.detachAll(target.cx, target.cy, 50)
+
+    expect(target.takeDamage(target.cx, target.cy, 100, 50)).toBe(0)
+    expect(target.detachFraction(0.5)).toBe(0)
+    expect(target.detachAll(target.cx, target.cy, 50)).toBe(0)
   })
 
   it('never exceeds the maximum initial-fragment budget', () => {

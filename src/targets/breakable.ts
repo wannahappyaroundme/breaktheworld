@@ -283,8 +283,12 @@ export class Breakable implements Target {
   }
 
   takeDamage(x: number, y: number, radius: number, force: number, mode: DetachMode = 'fall'): number {
+    const pattern: DamagePattern = { kind: 'circle', x, y, radius }
+    if (!this.attached.some((fragment) => matchesPattern(this.fragmentCenter(fragment), pattern))) {
+      return 0
+    }
     return this.applyDamage({
-      pattern: { kind: 'circle', x, y, radius },
+      pattern,
       minRatio: 0,
       maxRatio: 1,
       force,
@@ -308,6 +312,7 @@ export class Breakable implements Target {
 
   detachFraction(frac: number, mode: DetachMode = 'dissolve'): number {
     const count = Math.floor(this.attached.length * frac)
+    if (count === 0) return 0
     const ratio = count / Math.max(1, this.total)
     return this.applyDamage({
       pattern: { kind: 'circle', x: this.cx, y: this.cy, radius: Infinity },
