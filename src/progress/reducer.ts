@@ -1,4 +1,4 @@
-import type { GameEvent } from './events'
+import { isCharacterWeaponId, type GameEvent } from './events'
 import type { ProgressStateV1, WeaponProgress } from './types'
 
 const MAX_COUNTER = Number.MAX_SAFE_INTEGER
@@ -21,6 +21,10 @@ function increment(value: number): number {
 function clampCharge(value: number): number {
   if (!Number.isFinite(value)) return 0
   return Math.min(Math.max(value, 0), 1)
+}
+
+function isPositiveSafeInteger(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0
 }
 
 function sortedIds(values: readonly string[]): string[] {
@@ -86,6 +90,18 @@ function settlementKey(event: GameEvent): string | null {
   }
 }
 
+function hasValidSettlementIdentity(event: GameEvent): boolean {
+  switch (event.type) {
+    case 'ATTACK_RESOLVED':
+    case 'CHARGE_RELEASED':
+    case 'TARGET_DESTROYED':
+    case 'WEAPON_USED':
+      return isPositiveSafeInteger(event.actionId) && isPositiveSafeInteger(event.targetRunId)
+    default:
+      return true
+  }
+}
+
 function recentKeys(state: ProgressStateV1): readonly string[] {
   return (state as RuntimeProgressState)[RECENT_EVENT_KEYS] ?? []
 }
@@ -125,7 +141,11 @@ function advanceDaily(state: ProgressStateV1, event: GameEvent): void {
     clampCharge(event.charge) === 1
   ) {
     nextProgress = increment(nextProgress)
-  } else if (daily.questId === 'characters_3' && event.type === 'WEAPON_USED') {
+  } else if (
+    daily.questId === 'characters_3' &&
+    event.type === 'WEAPON_USED' &&
+    isCharacterWeaponId(event.weaponId)
+  ) {
     distinctIds = sortedIds([...distinctIds, event.weaponId])
     nextProgress = Math.max(nextProgress, distinctIds.length)
   } else if (daily.questId === 'targets_3' && event.type === 'TARGET_DESTROYED') {
@@ -151,6 +171,7 @@ function hasUserSource(event: GameEvent): event is Exclude<GameEvent, { type: 'S
 /** Reduces validated game outcomes without storage, clock, or DOM access. */
 export function reduceProgress(state: ProgressStateV1, event: GameEvent): ProgressStateV1 {
   if (hasUserSource(event) && event.source !== 'user') return state
+  if (!hasValidSettlementIdentity(event)) return state
   if (event.type === 'ATTACK_RESOLVED' && (!Number.isFinite(event.detached) || event.detached <= 0)) {
     return state
   }

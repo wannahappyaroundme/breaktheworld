@@ -158,6 +158,44 @@ describe('progress reducer', () => {
     expect(secondRun.byWeapon.hammer.uses).toBe(2)
   })
 
+  it.each([
+    ['ATTACK_RESOLVED', attack()],
+    ['CHARGE_RELEASED', charged()],
+    ['TARGET_DESTROYED', destroyed()],
+    ['WEAPON_USED', used()],
+  ] as const)('rejects invalid settlement identity boundaries for %s', (_type, event) => {
+    const state = createDefaultProgress('seed')
+    const invalidIds = [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      -1,
+      0,
+      1.5,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]
+
+    for (const invalidId of invalidIds) {
+      expect(reduceProgress(state, { ...event, actionId: invalidId })).toBe(state)
+      expect(reduceProgress(state, { ...event, targetRunId: invalidId })).toBe(state)
+    }
+  })
+
+  it.each([
+    ['ATTACK_RESOLVED', attack()],
+    ['CHARGE_RELEASED', charged()],
+    ['TARGET_DESTROYED', destroyed()],
+    ['WEAPON_USED', used()],
+  ] as const)('accepts positive safe-integer identity boundaries for %s', (_type, event) => {
+    const state = createDefaultProgress('seed')
+
+    expect(reduceProgress(state, { ...event, actionId: 1, targetRunId: 1 })).not.toBe(state)
+    expect(reduceProgress(state, {
+      ...event,
+      actionId: Number.MAX_SAFE_INTEGER,
+      targetRunId: Number.MAX_SAFE_INTEGER,
+    })).not.toBe(state)
+  })
+
   it('keeps settlement dedupe history through unrelated accepted events', () => {
     const usedOnce = reduceProgress(createDefaultProgress('seed'), used())
     const comboChanged = reduceProgress(usedOnce, {
@@ -260,6 +298,26 @@ describe('progress reducer', () => {
     const afterCompletion = reduceProgress(state, used({ actionId: 5, weaponId: 'pooh' }))
     expect(afterCompletion.daily.progress).toBe(3)
     expect(afterCompletion.lifetime.stamps).toBe(1)
+  })
+
+  it('counts only character weapons toward the distinct-character daily quest', () => {
+    let state = withDaily(createDefaultProgress('seed'), 'characters_3', 3)
+    state = reduceProgress(state, used({ actionId: 1, weaponId: 'hammer' }))
+    state = reduceProgress(state, used({ actionId: 2, weaponId: 'fire' }))
+    state = reduceProgress(state, used({ actionId: 3, weaponId: 'blackhole' }))
+
+    expect(state.daily.progress).toBe(0)
+    expect(state.daily.distinctIds).toEqual([])
+    expect(state.daily.completedAt).toBeNull()
+
+    state = reduceProgress(state, used({ actionId: 4, weaponId: 'cinnamoroll' }))
+    state = reduceProgress(state, used({ actionId: 5, weaponId: 'dragonball' }))
+    state = reduceProgress(state, used({ actionId: 6, weaponId: 'ditto' }))
+
+    expect(state.daily.progress).toBe(3)
+    expect(state.daily.distinctIds).toEqual(['cinnamoroll', 'ditto', 'dragonball'])
+    expect(state.daily.completedAt).not.toBeNull()
+    expect(state.lifetime.stamps).toBe(1)
   })
 
   it('advances charged and destroyed daily quests only from their matching user event', () => {
