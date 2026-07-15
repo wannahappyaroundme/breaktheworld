@@ -15,7 +15,11 @@ import {
 } from './character-catalog'
 import { runCharacterMove } from './character-runtime'
 import { characterWeapons } from './characters'
-import { CHARACTER_SKIN_ASSETS } from '../art/assets'
+import {
+  CHARACTER_SKINS,
+  resolveCharacterSkinAsset,
+  type CharacterSkinGetter,
+} from '../art/assets'
 import { elementalPatternMemory } from './pattern-memory'
 
 const EXPECTED_IDS = {
@@ -186,12 +190,24 @@ describe('character move catalog', () => {
     }
   })
 
-  it('keeps the previous Cinnamoroll and Ditto art as classic skin assets', () => {
-    expect(CHARACTER_SKIN_ASSETS.cinnamoroll).toEqual({
-      default: 'cinnamoroll',
-      classic: 'cinnamorollOld',
-    })
-    expect(CHARACTER_SKIN_ASSETS.ditto).toEqual({ default: 'ditto', classic: 'dittoOld' })
+  it('keeps the previous Cinnamoroll and Ditto art in an ordered skin catalog', () => {
+    expect(CHARACTER_SKINS.cinnamoroll).toEqual([
+      { id: 'default', name: '기본', asset: 'cinnamoroll' },
+      { id: 'classic', name: '클래식', asset: 'cinnamorollOld' },
+    ])
+    expect(CHARACTER_SKINS.ditto).toEqual([
+      { id: 'default', name: '기본', asset: 'ditto' },
+      { id: 'classic', name: '클래식', asset: 'dittoOld' },
+    ])
+  })
+
+  it('resolves a Game-supplied skin getter and safely falls back to default', () => {
+    const classic: CharacterSkinGetter = vi.fn(() => 'classic')
+    const invalid: CharacterSkinGetter = vi.fn(() => 'unknown')
+
+    expect(resolveCharacterSkinAsset('cinnamoroll', classic)).toBe('cinnamorollOld')
+    expect(classic).toHaveBeenCalledWith('cinnamoroll')
+    expect(resolveCharacterSkinAsset('ditto', invalid)).toBe('ditto')
   })
 
   it('builds copySmash from the last successful elemental pattern', () => {

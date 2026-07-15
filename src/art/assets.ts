@@ -19,11 +19,49 @@ export type AssetName =
   | 'cinnamorollOld'
   | 'dittoOld'
 
+export type CharacterSkinId = 'default' | 'classic'
+export type SkinnableCharacterId = 'cinnamoroll' | 'ditto'
+export type CharacterSkinGetter = (characterId: SkinnableCharacterId) => string | undefined
+
+export interface CharacterSkin {
+  id: CharacterSkinId
+  name: string
+  asset: AssetName
+}
+
+export type CharacterSkinCatalog = Record<
+  SkinnableCharacterId,
+  readonly [CharacterSkin, CharacterSkin]
+>
+
 /** Old personal artwork remains available as a skin without creating extra weapons. */
-export const CHARACTER_SKIN_ASSETS = {
-  cinnamoroll: { default: 'cinnamoroll', classic: 'cinnamorollOld' },
-  ditto: { default: 'ditto', classic: 'dittoOld' },
-} as const satisfies Record<string, { default: AssetName; classic: AssetName }>
+export const CHARACTER_SKINS = {
+  cinnamoroll: [
+    { id: 'default', name: '기본', asset: 'cinnamoroll' },
+    { id: 'classic', name: '클래식', asset: 'cinnamorollOld' },
+  ],
+  ditto: [
+    { id: 'default', name: '기본', asset: 'ditto' },
+    { id: 'classic', name: '클래식', asset: 'dittoOld' },
+  ],
+} as const satisfies CharacterSkinCatalog
+
+/** Resolve persisted/user-selected skin ids, with a stable default for missing or stale values. */
+export function resolveCharacterSkinAsset(
+  characterId: SkinnableCharacterId,
+  getSelectedSkin: CharacterSkinGetter = () => 'default'
+): AssetName {
+  let selected: string | undefined
+  try {
+    selected = getSelectedSkin(characterId)
+  } catch {
+    selected = 'default'
+  }
+  return (
+    CHARACTER_SKINS[characterId].find((skin) => skin.id === selected) ??
+    CHARACTER_SKINS[characterId][0]
+  ).asset
+}
 
 const FILES: Record<AssetName, string> = {
   earth: 'earth.png',

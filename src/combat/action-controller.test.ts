@@ -81,7 +81,9 @@ function makeWeapon(overrides: Partial<Weapon> = {}): Weapon {
     name: '테스트 무기',
     icon: '🔨',
     mode: 'point',
-    apply: vi.fn(),
+    quick: vi.fn(),
+    drag: vi.fn(),
+    charged: vi.fn(),
     ...overrides,
   }
 }
@@ -93,7 +95,6 @@ function harness() {
   let seed = 99
   const settled = vi.fn()
   const damaged = vi.fn()
-  const warn = vi.fn()
   const controller = new ActionController({
     getTarget: () => target,
     getTargetRunId: () => targetRunId,
@@ -101,14 +102,12 @@ function harness() {
     nextSeed: () => seed,
     onSettled: settled,
     onDamage: damaged,
-    warn,
   })
 
   return {
     controller,
     settled,
     damaged,
-    warn,
     get target() {
       return target
     },
@@ -264,6 +263,25 @@ describe('ActionController damage guard', () => {
 })
 
 describe('ActionController gesture settlement', () => {
+  it('runs a checked system quick action through the same damage guard', () => {
+    const h = harness()
+    const world = makeWorld(h.target)
+    const quick = vi.fn((_world: World, action: Parameters<Weapon['quick']>[1]) =>
+      action.damage(damageRequest(h.target))
+    )
+    const weapon = makeWeapon({ quick })
+
+    expect(h.controller.runSystemQuick(weapon, world, 25, 35)).toMatchObject({
+      kind: 'quick',
+      weaponId: weapon.id,
+    })
+    expect(quick).toHaveBeenCalledTimes(1)
+    expect(h.damaged).toHaveBeenCalledTimes(1)
+    expect(h.damaged).toHaveBeenCalledWith(
+      expect.objectContaining({ damage: expect.objectContaining({ detached: 5 }) })
+    )
+  })
+
   it('settles a tap once and ignores a duplicate release', () => {
     const h = harness()
     const weapon = makeWeapon()
@@ -275,7 +293,7 @@ describe('ActionController gesture settlement', () => {
       weaponId: weapon.id,
     })
     expect(h.controller.handle({ type: 'tap', id: 1, x: 11, y: 21 }, weapon, world)).toBeNull()
-    expect(weapon.apply).toHaveBeenCalledTimes(1)
+    expect(weapon.quick).toHaveBeenCalledTimes(1)
     expect(h.settled).toHaveBeenCalledTimes(1)
   })
 
@@ -289,14 +307,14 @@ describe('ActionController gesture settlement', () => {
     h.controller.handle({ type: 'press', id: 2, x: 30, y: 40 }, weapon, world)
     h.controller.handle({ type: 'tap', id: 2, x: 30, y: 40 }, weapon, world)
 
-    expect(weapon.apply).toHaveBeenCalledTimes(1)
+    expect(weapon.quick).toHaveBeenCalledTimes(1)
 
     h.now += 1_401
     h.controller.update(h.now)
     h.controller.handle({ type: 'press', id: 3, x: 50, y: 60 }, weapon, world)
     h.controller.handle({ type: 'tap', id: 3, x: 50, y: 60 }, weapon, world)
 
-    expect(weapon.apply).toHaveBeenCalledTimes(2)
+    expect(weapon.quick).toHaveBeenCalledTimes(2)
   })
 
   it('keeps combo grace while pressed and charging, then for 200ms after release', () => {
@@ -363,7 +381,8 @@ describe('ActionController gesture settlement', () => {
       weapon,
       world
     )).toMatchObject({ kind: 'charged' })
-    expect(weapon.apply).toHaveBeenCalledTimes(2)
+    expect(weapon.quick).toHaveBeenCalledTimes(1)
+    expect(weapon.charged).toHaveBeenCalledTimes(1)
   })
 
   it('rejects a superseded secondary tap without disturbing the fresh primary action', () => {
@@ -375,33 +394,34 @@ describe('ActionController gesture settlement', () => {
     h.controller.handle({ type: 'press', id: 1, x: 10, y: 20 }, supersededWeapon, world)
     h.controller.handle({ type: 'press', id: 2, x: 30, y: 40 }, supersededWeapon, world)
     h.controller.handle({ type: 'tap', id: 1, x: 10, y: 20 }, supersededWeapon, world)
-    expect(supersededWeapon.apply).toHaveBeenCalledTimes(1)
+    expect(supersededWeapon.quick).toHaveBeenCalledTimes(1)
 
     h.controller.handle({ type: 'press', id: 3, x: 50, y: 60 }, freshWeapon, world)
 
     expect(
       h.controller.handle({ type: 'tap', id: 2, x: 30, y: 40 }, freshWeapon, world)
     ).toBeNull()
-    expect(supersededWeapon.apply).toHaveBeenCalledTimes(1)
+    expect(supersededWeapon.quick).toHaveBeenCalledTimes(1)
     expect(h.settled).toHaveBeenCalledTimes(1)
-    expect(h.warn).not.toHaveBeenCalled()
     expect(h.controller.state).toBe('pressed')
 
     expect(
       h.controller.handle({ type: 'tap', id: 3, x: 50, y: 60 }, freshWeapon, world)
     ).toMatchObject({ kind: 'quick', weaponId: 'fresh' })
-    expect(freshWeapon.apply).toHaveBeenCalledTimes(1)
+    expect(freshWeapon.quick).toHaveBeenCalledTimes(1)
     expect(h.settled).toHaveBeenCalledTimes(2)
   })
 
-  it('invokes the legacy bridge only for settled tap, drag, and charged release', () => {
+  it('dispatches only the matching required handler for settled gestures', () => {
     const h = harness()
     const weapon = makeWeapon()
     const world = makeWorld(h.target)
 
     h.controller.handle({ type: 'press', id: 1, x: 10, y: 20 }, weapon, world)
     h.controller.handle({ type: 'cancel', id: 1 }, weapon, world)
-    expect(weapon.apply).not.toHaveBeenCalled()
+    expect(weapon.quick).not.toHaveBeenCalled()
+    expect(weapon.drag).not.toHaveBeenCalled()
+    expect(weapon.charged).not.toHaveBeenCalled()
 
     h.controller.handle({ type: 'press', id: 2, x: 10, y: 20 }, weapon, world)
     h.controller.handle({ type: 'tap', id: 2, x: 10, y: 20 }, weapon, world)
@@ -418,10 +438,12 @@ describe('ActionController gesture settlement', () => {
       world
     )
 
-    expect(weapon.apply).toHaveBeenCalledTimes(3)
+    expect(weapon.quick).toHaveBeenCalledTimes(1)
+    expect(weapon.drag).toHaveBeenCalledTimes(1)
+    expect(weapon.charged).toHaveBeenCalledTimes(1)
   })
 
-  it('prefers the matching action handler over the legacy bridge', () => {
+  it('passes the settled action to the matching handler', () => {
     const h = harness()
     const quick = vi.fn()
     const weapon = makeWeapon({ quick })
@@ -434,23 +456,6 @@ describe('ActionController gesture settlement', () => {
       world,
       expect.objectContaining({ x: 11, y: 21, charge: 0, seed: 99 })
     )
-    expect(weapon.apply).not.toHaveBeenCalled()
-  })
-
-  it('settles safely and emits one development warning when no handler exists', () => {
-    const h = harness()
-    const weapon = makeWeapon({ apply: undefined })
-    const world = makeWorld(h.target)
-
-    for (const id of [1, 2]) {
-      h.controller.handle({ type: 'press', id, x: 10, y: 20 }, weapon, world)
-      expect(h.controller.handle({ type: 'tap', id, x: 10, y: 20 }, weapon, world)).toMatchObject({
-        kind: 'quick',
-      })
-    }
-
-    expect(h.warn).toHaveBeenCalledTimes(1)
-    expect(h.settled).toHaveBeenCalledTimes(2)
   })
 })
 

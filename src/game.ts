@@ -12,14 +12,16 @@ import { TargetManager } from './targets/manager'
 import { createEarth } from './targets/earth'
 import { createCity } from './targets/city'
 import { createWord } from './targets/word'
-import { weapons, defaultWeaponId, findWeapon } from './weapons/registry'
+import { createWeaponRoster, defaultWeaponId, findWeapon } from './weapons/registry'
 import type { Weapon, World } from './weapons/weapon'
+import type { CharacterSkinId, SkinnableCharacterId } from './art/assets'
 import type { Target } from './targets/target'
 import { glassBits, confetti, smoke } from './weapons/fx'
 import { Hud } from './ui/hud'
 import { WhatsNew } from './ui/whatsnew'
 import { shareCard } from './ui/sharecard'
 import { WeaponBar } from './weapons/bar'
+import { OneTimeHoldHint } from './ui/hold-hint'
 
 const COMBO_RESET_SEC = 1.6
 const BEST_KEY = 'btw.bestCombo'
@@ -47,6 +49,7 @@ export class Game {
   private controller: ActionController
   private input: Input
   private chargeVisual: ChargeVisual
+  private weaponRoster: Weapon[]
   private weapon: Weapon
   private hud: Hud
   private whatsNew: WhatsNew
@@ -61,8 +64,8 @@ export class Game {
   private feverActive = false
   private feverTimer = 0
   private feverHue = 0
-  private hintHidden = false
-  private hintEl: HTMLElement | null
+  private holdHint: OneTimeHoldHint
+  private demoMode = false
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.renderer = new Renderer(canvas)
@@ -84,11 +87,15 @@ export class Game {
 
     this.best = Number(localStorage.getItem(BEST_KEY) || '0') || 0
     this.totalTargets = Number(localStorage.getItem(STATS_KEY) || '0') || 0
-    this.weapon = findWeapon(defaultWeaponId)
+    this.weaponRoster = createWeaponRoster((characterId) => this.selectedCharacterSkin(characterId))
+    this.weapon = findWeapon(defaultWeaponId, this.weaponRoster)
     this.controller = new ActionController({
       getTarget: () => this.manager.current,
       getTargetRunId: () => this.manager.targetRunId,
-      onDamage: () => this.addCombo(),
+      onDamage: (resolution) => {
+        this.addCombo()
+        if (!this.demoMode) this.holdHint.onDamage(resolution)
+      },
     })
     this.chargeVisual = new ChargeVisual(
       window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -102,9 +109,9 @@ export class Game {
       onShare: this.onShare,
     })
     this.hud.setBest(this.best)
-    this.bar = new WeaponBar(uiRoot, weapons, (w) => this.selectWeapon(w))
+    this.bar = new WeaponBar(uiRoot, this.weaponRoster, (w) => this.selectWeapon(w))
     this.bar.select(this.weapon.id)
-    this.hintEl = document.getElementById('tap-hint')
+    this.holdHint = new OneTimeHoldHint(document.getElementById('tap-hint'))
     if (!location.search.includes('nonews')) this.whatsNew.maybeShowOnLoad()
 
     this.input = new Input(canvas, (event) => this.onGesture(event), 'gesture')
@@ -117,7 +124,8 @@ export class Game {
 
     new GameLoop((dtMs) => this.frame(dtMs)).start()
 
-    if (location.search.includes('demo')) this.runDemo()
+    this.demoMode = location.search.includes('demo')
+    if (this.demoMode) this.runDemo()
     if (location.search.includes('fever')) window.setTimeout(() => this.enterFever(), 700)
   }
 
@@ -125,7 +133,7 @@ export class Game {
   private runDemo(): void {
     const m = location.search.match(/demo=([a-z]+)/)
     if (m) {
-      const wpn = findWeapon(m[1])
+      const wpn = findWeapon(m[1], this.weaponRoster)
       this.selectWeapon(wpn)
     }
     const offsets = [
@@ -137,19 +145,21 @@ export class Game {
       [-55, 25],
       [25, -45],
     ]
+    this.holdHint.hideInitial()
+    const intervalMs = this.weapon.mode === 'cinematic' ? 1_450 : 170
     offsets.forEach((o, i) => {
       window.setTimeout(() => {
         const t = this.manager.current
-        if (!this.hintHidden) {
-          this.hintHidden = true
-          this.hintEl?.classList.add('hidden')
-        }
-        if (this.weapon.apply) {
-          this.weapon.apply(this.world(), t.cx + o[0], t.cy + o[1])
-          this.addCombo()
-        }
-      }, 150 + i * 170)
+        const x = t.cx + o[0]
+        const y = t.cy + o[1]
+        this.controller.runSystemQuick(this.weapon, this.world(), x, y)
+      }, 150 + i * intervalMs)
     })
+  }
+
+  /** Plan B replaces this default with the validated progress profile getter. */
+  private selectedCharacterSkin(_characterId: SkinnableCharacterId): CharacterSkinId {
+    return 'default'
   }
 
   private selectWeapon(w: Weapon): void {
@@ -175,10 +185,7 @@ export class Game {
   private onGesture(event: GestureEvent): void {
     if (event.type === 'press') {
       this.audio.unlock()
-      if (!this.hintHidden) {
-        this.hintHidden = true
-        this.hintEl?.classList.add('hidden')
-      }
+      this.holdHint.hideInitial()
     }
     this.controller.handle(event, this.weapon, this.world())
   }

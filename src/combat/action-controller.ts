@@ -53,7 +53,6 @@ export interface ActionControllerOptions {
   nextSeed?: () => number
   onSettled?: (resolution: ActionResolution) => void
   onDamage?: (resolution: ActionDamageResolution) => void
-  warn?: (message: string) => void
 }
 
 export interface StartAction {
@@ -91,14 +90,12 @@ export class ActionController {
   private cinematicUntil = 0
   private recoveryUntil = 0
   private currentCharge: ChargeState | null = null
-  private warnedWeapons = new Set<string>()
   private getTarget: () => Target
   private getTargetRunId: () => number
   private now: () => number
   private nextSeed: () => number
   private onSettled?: (resolution: ActionResolution) => void
   private onDamage?: (resolution: ActionDamageResolution) => void
-  private warn: (message: string) => void
 
   constructor(options: ActionControllerOptions) {
     this.getTarget = options.getTarget
@@ -107,7 +104,6 @@ export class ActionController {
     this.nextSeed = options.nextSeed ?? (() => Math.floor(Math.random() * 0x1_0000_0000))
     this.onSettled = options.onSettled
     this.onDamage = options.onDamage
-    this.warn = options.warn ?? console.warn
   }
 
   get state(): ActionState {
@@ -127,6 +123,30 @@ export class ActionController {
     this.pointerId = null
     this.currentCharge = null
     return this.beginAction(input).action
+  }
+
+  /** Production demo/system entry point; damage still passes action and target-run guards. */
+  runSystemQuick(
+    weapon: Weapon,
+    world: World,
+    x: number,
+    y: number
+  ): ActionResolution | null {
+    const nowMs = this.now()
+    this.update(nowMs)
+    if (this.isCinematicLocked(nowMs)) return null
+    this.cancel('system')
+    const active = this.beginAction(
+      {
+        weapon,
+        targetRunId: this.getTargetRunId(),
+        x,
+        y,
+        seed: this.nextSeed(),
+      },
+      world
+    )
+    return this.settle(active, 'quick', x, y, 0, nowMs)
   }
 
   handle(event: GestureEvent, weapon: Weapon, world: World): ActionResolution | null {
@@ -376,13 +396,6 @@ export class ActionController {
       if (!keepPointer) this.pointerId = null
     }
 
-    const handler =
-      kind === 'quick'
-        ? active.weapon.quick
-        : kind === 'drag'
-          ? active.weapon.drag
-          : active.weapon.charged
-
     if (!preserveController) {
       if (active.weapon.mode === 'cinematic') {
         this.currentState = 'cinematic'
@@ -396,14 +409,9 @@ export class ActionController {
       this.comboGraceUntil = nowMs + COMBO_GRACE_MS
     }
 
-    if (handler) {
-      handler(active.world, active.action)
-    } else if (active.weapon.apply) {
-      active.weapon.apply(active.world, x, y)
-    } else if (!this.warnedWeapons.has(active.weapon.id)) {
-      this.warnedWeapons.add(active.weapon.id)
-      this.warn(`[combat] ${active.weapon.id} has no ${kind} or legacy apply handler`)
-    }
+    if (kind === 'quick') active.weapon.quick(active.world, active.action)
+    else if (kind === 'drag') active.weapon.drag(active.world, active.action)
+    else active.weapon.charged(active.world, active.action)
 
     const resolution: ActionResolution = {
       actionId: active.action.actionId,

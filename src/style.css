@@ -150,6 +150,9 @@ body {
   justify-content: center;
   gap: 4px;
   cursor: pointer;
+  color: inherit;
+  font: inherit;
+  padding: 0;
   scroll-snap-align: center;
   transition: transform 0.08s, border-color 0.12s, background 0.12s;
 }
@@ -183,6 +186,10 @@ body {
 }
 .weapon:active {
   transform: scale(0.9);
+}
+.weapon:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
 }
 .weapon.selected {
   border-color: var(--accent);
@@ -218,6 +225,23 @@ body {
   50% {
     opacity: 0.9;
     transform: translateX(-50%) scale(1.04);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .weapon:active,
+  .icon-btn:active,
+  .whatsnew .ok-btn:active {
+    transform: none !important;
   }
 }
 

@@ -109,27 +109,6 @@ function checkedDamage(
   return result
 }
 
-function seedForLegacy(id: string, x: number, y: number, fragments: number): number {
-  let seed = 0x811c9dc5
-  for (let i = 0; i < id.length; i++) seed = Math.imul(seed ^ id.charCodeAt(i), 0x01000193)
-  seed = Math.imul(seed ^ Math.round(x), 0x01000193)
-  seed = Math.imul(seed ^ Math.round(y), 0x01000193)
-  return (seed ^ fragments) >>> 0
-}
-
-function legacyAction(id: string, world: World, x: number, y: number): WeaponAction {
-  const seed = seedForLegacy(id, x, y, world.target.attachedCount)
-  return {
-    actionId: 0,
-    targetRunId: 0,
-    x,
-    y,
-    charge: 0,
-    seed,
-    damage: (request) => world.target.applyDamage({ ...request, seed }),
-  }
-}
-
 function addProjectile(world: World, effect: ReturnType<typeof projectile>, onSkipped: () => void): void {
   if (!world.effects.add(effect)) onSkipped()
 }
@@ -484,7 +463,7 @@ function makeElemental(
   mode: Weapon['mode'] = 'point'
 ): Weapon {
   const attack = ATTACKS[id]
-  const weapon: Weapon = {
+  return {
     id,
     name,
     icon,
@@ -494,8 +473,6 @@ function makeElemental(
     drag: (world, action) => attack(world, action, 'drag'),
     charged: (world, action) => attack(world, action, 'charged'),
   }
-  weapon.apply = (world, x, y) => attack(world, legacyAction(id, world, x, y), 'quick')
-  return weapon
 }
 
 export const elementalWeapons: Weapon[] = [

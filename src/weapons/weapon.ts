@@ -38,9 +38,7 @@ export interface Weapon {
   /** Charge-ring and compact UI accent; falls back to a stable id-derived color. */
   accentColor?: string
   mode: WeaponMode
-  /** Temporary Task 3-5 bridge. Task 6 removes this member. */
-  apply?: (world: World, x: number, y: number) => void
-  quick?: (world: World, action: WeaponAction) => void
-  drag?: (world: World, action: WeaponAction) => void
-  charged?: (world: World, action: WeaponAction) => void
+  quick: (world: World, action: WeaponAction) => void
+  drag: (world: World, action: WeaponAction) => void
+  charged: (world: World, action: WeaponAction) => void
 }

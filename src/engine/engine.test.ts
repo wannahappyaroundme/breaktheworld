@@ -379,7 +379,9 @@ describe('TargetManager', () => {
       name: 'test',
       icon: 'x',
       mode: 'point',
-      apply: () => {},
+      quick: () => {},
+      drag: () => {},
+      charged: () => {},
     }
     const action = controller.start({
       weapon,
