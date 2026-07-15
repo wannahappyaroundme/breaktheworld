@@ -11,22 +11,24 @@ export class Effects {
   private updating = false
   private insertionOrder = new WeakMap<Effect, number>()
   private nextInsertionOrder = 0
+  private evicted = new Set<Effect>()
 
   get activeCount(): number {
-    return (
-      this.below.length +
-      this.above.length +
-      this.pendingBelow.length +
-      this.pendingAbove.length
+    const collections = [this.below, this.above, this.pendingBelow, this.pendingAbove]
+    return collections.reduce(
+      (count, collection) =>
+        count + collection.reduce((sum, effect) => sum + (this.evicted.has(effect) ? 0 : 1), 0),
+      0
     )
   }
 
   has(effect: Effect): boolean {
     return (
-      this.below.includes(effect) ||
-      this.above.includes(effect) ||
-      this.pendingBelow.includes(effect) ||
-      this.pendingAbove.includes(effect)
+      !this.evicted.has(effect) &&
+      (this.below.includes(effect) ||
+        this.above.includes(effect) ||
+        this.pendingBelow.includes(effect) ||
+        this.pendingAbove.includes(effect))
     )
   }
 
@@ -56,7 +58,7 @@ export class Effects {
     for (const collection of collections) {
       for (let index = 0; index < collection.length; index++) {
         const effect = collection[index]
-        if (effect.priority === 'essential') continue
+        if (effect.priority === 'essential' || this.evicted.has(effect)) continue
         const order = this.insertionOrder.get(effect) ?? Number.NEGATIVE_INFINITY
         if (order > newestOrder) {
           newestCollection = collection
@@ -67,21 +69,40 @@ export class Effects {
     }
 
     if (!newestCollection || newestIndex < 0) return false
-    newestCollection.splice(newestIndex, 1)
+    const effect = newestCollection[newestIndex]
+    this.evicted.add(effect)
+    if (!this.updating) {
+      this.compactEvictions()
+      this.evicted.clear()
+    }
     return true
+  }
+
+  private compactEvictions(): void {
+    const retained = (effect: Effect) => !this.evicted.has(effect)
+    this.below = this.below.filter(retained)
+    this.above = this.above.filter(retained)
+    this.pendingBelow = this.pendingBelow.filter(retained)
+    this.pendingAbove = this.pendingAbove.filter(retained)
   }
 
   update(dtSec: number): void {
     this.updating = true
     try {
-      this.below = this.below.filter((e) => e.update(dtSec))
-      this.above = this.above.filter((e) => e.update(dtSec))
+      const updateEffect = (effect: Effect) => {
+        if (this.evicted.has(effect)) return false
+        return effect.update(dtSec) && !this.evicted.has(effect)
+      }
+      this.below = this.below.filter(updateEffect)
+      this.above = this.above.filter(updateEffect)
     } finally {
       this.updating = false
+      this.compactEvictions()
       this.below.push(...this.pendingBelow)
       this.above.push(...this.pendingAbove)
       this.pendingBelow = []
       this.pendingAbove = []
+      this.evicted.clear()
     }
   }
 
@@ -99,5 +120,6 @@ export class Effects {
     this.pendingAbove = []
     this.insertionOrder = new WeakMap()
     this.nextInsertionOrder = 0
+    this.evicted.clear()
   }
 }

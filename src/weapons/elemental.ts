@@ -93,8 +93,8 @@ function checkedDamage(
   }
 
   const frame = {
-    x: world.target.cx,
-    y: world.target.cy,
+    x: action.x,
+    y: action.y,
     radius: world.target.radius,
   }
   const result = action.damage({

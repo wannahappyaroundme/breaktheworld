@@ -43,8 +43,8 @@ function restoredPoint(
 ) {
   const rotated = rotatePoint(point, angle)
   return {
-    x: context.targetX + rotated.x * context.targetRadius,
-    y: context.targetY + rotated.y * context.targetRadius,
+    x: context.x + rotated.x * context.targetRadius,
+    y: context.y + rotated.y * context.targetRadius,
   }
 }
 

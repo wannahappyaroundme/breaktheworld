@@ -427,4 +427,92 @@ describe('Effects budget', () => {
     expect(effects.has(replacementEssential)).toBe(true)
     expect(effects.has(garnishes[garnishes.length - 1])).toBe(false)
   })
+
+  it('defers eviction when the newest garnish adds an essential during its own update', () => {
+    const effects = new Effects()
+    for (let i = 0; i < 23; i++) {
+      effects.add({ update: () => true, draw: vi.fn() })
+    }
+    const essential: Effect = {
+      priority: 'essential',
+      update: () => true,
+      draw: vi.fn(),
+    }
+    const newestGarnish: Effect = {
+      update: () => {
+        expect(effects.add(essential)).toBe(true)
+        return true
+      },
+      draw: vi.fn(),
+    }
+    effects.add(newestGarnish)
+
+    effects.update(0.016)
+
+    expect(effects.activeCount).toBe(24)
+    expect(effects.has(essential)).toBe(true)
+    expect(effects.has(newestGarnish)).toBe(false)
+  })
+
+  it('removes a marked garnish that was already processed in the active update', () => {
+    const effects = new Effects()
+    const garnishes = Array.from({ length: 23 }, (): Effect => ({
+      update: () => true,
+      draw: vi.fn(),
+    }))
+    for (const garnish of garnishes) effects.add(garnish)
+    const replacementEssential: Effect = {
+      priority: 'essential',
+      update: () => true,
+      draw: vi.fn(),
+    }
+    const triggerEssential: Effect = {
+      priority: 'essential',
+      update: () => {
+        expect(effects.add(replacementEssential)).toBe(true)
+        return true
+      },
+      draw: vi.fn(),
+    }
+    effects.add(triggerEssential)
+
+    effects.update(0.016)
+
+    expect(effects.activeCount).toBe(24)
+    expect(effects.has(triggerEssential)).toBe(true)
+    expect(effects.has(replacementEssential)).toBe(true)
+    expect(effects.has(garnishes[garnishes.length - 1])).toBe(false)
+  })
+
+  it('skips a marked garnish before its update callback runs', () => {
+    const effects = new Effects()
+    for (let i = 0; i < 22; i++) {
+      effects.add({ update: () => true, draw: vi.fn() })
+    }
+    const replacementEssential: Effect = {
+      priority: 'essential',
+      update: () => true,
+      draw: vi.fn(),
+    }
+    const triggerEssential: Effect = {
+      z: -1,
+      priority: 'essential',
+      update: () => {
+        expect(effects.add(replacementEssential)).toBe(true)
+        return true
+      },
+      draw: vi.fn(),
+    }
+    effects.add(triggerEssential)
+    const futureUpdate = vi.fn(() => true)
+    const futureGarnish: Effect = { update: futureUpdate, draw: vi.fn() }
+    effects.add(futureGarnish)
+
+    effects.update(0.016)
+
+    expect(futureUpdate).not.toHaveBeenCalled()
+    expect(effects.activeCount).toBe(24)
+    expect(effects.has(futureGarnish)).toBe(false)
+    expect(effects.has(replacementEssential)).toBe(true)
+  })
 })
