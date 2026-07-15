@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createDefaultProgress } from './defaults'
+import { reduceProgress } from './reducer'
 import { ProgressStore, PROGRESS_STORAGE_KEY, type CheckpointReason, type StorageAdapter } from './store'
 import { parseProgress } from './validate'
 
@@ -210,6 +211,153 @@ describe('parseProgress', () => {
 
     expect(parsed.lifetime.validHits).toBe(7)
     expect(parsed.daily).toEqual(createDefaultProgress('seed').daily)
+  })
+
+  it('derives unfinished character progress only from filtered valid character IDs', () => {
+    const parsed = parseProgress({
+      installSeed: 'seed',
+      daily: {
+        dayKey: '2026-07-16',
+        questId: 'characters_3',
+        target: 3,
+        progress: 3,
+        distinctIds: ['hammer', 'fire', 'unknown'],
+        completedAt: null,
+        stampAwarded: false,
+      },
+    }, KNOWN_WEAPONS, KNOWN_MOVES)
+
+    expect(parsed.daily.progress).toBe(0)
+    expect(parsed.daily.distinctIds).toEqual([])
+    expect(parsed.daily.completedAt).toBeNull()
+    expect(parsed.daily.stampAwarded).toBe(false)
+  })
+
+  it('unlocks a contradictory partial completion so the reducer can progress it again', () => {
+    const parsed = parseProgress({
+      installSeed: 'seed',
+      lifetime: { validHits: 7, totalTargets: 4 },
+      daily: {
+        dayKey: '2026-07-16',
+        questId: 'targets_3',
+        target: 3,
+        progress: 1,
+        distinctIds: [],
+        completedAt: '2026-07-16T01:02:03.000Z',
+        stampAwarded: false,
+      },
+    }, KNOWN_WEAPONS, KNOWN_MOVES)
+
+    expect(parsed.lifetime.validHits).toBe(7)
+    expect(parsed.lifetime.totalTargets).toBe(4)
+    expect(parsed.daily).toMatchObject({
+      progress: 1,
+      target: 3,
+      completedAt: null,
+      stampAwarded: false,
+    })
+
+    const advanced = reduceProgress(parsed, {
+      type: 'TARGET_DESTROYED',
+      source: 'user',
+      actionId: 1,
+      targetRunId: 1,
+      weaponId: 'hammer',
+      targetId: 'word',
+      golden: false,
+    })
+    expect(advanced.daily.progress).toBe(2)
+    expect(advanced.daily.completedAt).toBeNull()
+  })
+
+  it('clears a ghost stamp and allows a target-progress state to complete again', () => {
+    const parsed = parseProgress({
+      installSeed: 'seed',
+      lifetime: { stamps: 4 },
+      daily: {
+        dayKey: '2026-07-16',
+        questId: 'targets_3',
+        target: 3,
+        progress: 3,
+        distinctIds: [],
+        completedAt: null,
+        stampAwarded: true,
+      },
+    }, KNOWN_WEAPONS, KNOWN_MOVES)
+
+    expect(parsed.daily.completedAt).toBeNull()
+    expect(parsed.daily.stampAwarded).toBe(false)
+    expect(parsed.lifetime.stamps).toBe(4)
+
+    const completed = reduceProgress(parsed, {
+      type: 'TARGET_DESTROYED',
+      source: 'user',
+      actionId: 2,
+      targetRunId: 1,
+      weaponId: 'hammer',
+      targetId: 'city',
+      golden: false,
+    })
+    expect(completed.daily.completedAt).not.toBeNull()
+    expect(completed.daily.stampAwarded).toBe(true)
+    expect(completed.lifetime.stamps).toBe(5)
+  })
+
+  it('preserves only a fully consistent completed daily state', () => {
+    const completedAt = '2026-07-16T01:02:03.000Z'
+    const parsed = parseProgress({
+      installSeed: 'seed',
+      daily: {
+        dayKey: '2026-07-16',
+        questId: 'targets_3',
+        target: 3,
+        progress: 3,
+        distinctIds: [],
+        completedAt,
+        stampAwarded: true,
+      },
+    }, KNOWN_WEAPONS, KNOWN_MOVES)
+
+    expect(parsed.daily).toMatchObject({
+      target: 3,
+      progress: 3,
+      completedAt,
+      stampAwarded: true,
+    })
+  })
+
+  it('repairs a zero target from the built-in quest policy and resets an invalid day', () => {
+    const repairedTarget = parseProgress({
+      installSeed: 'seed',
+      daily: {
+        dayKey: '2026-07-16',
+        questId: 'charged_finisher_2',
+        target: 0,
+        progress: 2,
+        distinctIds: [],
+        completedAt: '2026-07-16T01:02:03.000Z',
+        stampAwarded: true,
+      },
+    }, KNOWN_WEAPONS, KNOWN_MOVES)
+    expect(repairedTarget.daily.target).toBe(2)
+    expect(repairedTarget.daily.completedAt).toBeNull()
+    expect(repairedTarget.daily.stampAwarded).toBe(false)
+
+    const invalidDay = parseProgress({
+      installSeed: 'seed',
+      lifetime: { validHits: 9 },
+      daily: {
+        dayKey: '2026-02-30',
+        questId: 'targets_3',
+        target: 3,
+        progress: 2,
+        distinctIds: [],
+        completedAt: null,
+        stampAwarded: false,
+      },
+    }, KNOWN_WEAPONS, KNOWN_MOVES)
+    expect(invalidDay.lifetime.validHits).toBe(9)
+    expect(invalidDay.daily).toEqual(createDefaultProgress('seed').daily)
   })
 
   it('starts from deterministic defaults for non-object input', () => {

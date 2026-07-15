@@ -3,6 +3,11 @@ import { createDefaultProgress } from './defaults'
 import type { ProgressStateV1 } from './types'
 
 const QUEST_IDS = new Set(['charged_finisher_2', 'characters_3', 'targets_3'])
+const BUILT_IN_QUEST_TARGETS: Readonly<Record<string, number>> = {
+  charged_finisher_2: 2,
+  characters_3: 3,
+  targets_3: 3,
+}
 const ACHIEVEMENT_IDS = [
   'first_destroy',
   'charge_master',
@@ -134,22 +139,39 @@ function parseDaily(
 ): void {
   const input = record(value)
   if (!input || typeof input.questId !== 'string' || !QUEST_IDS.has(input.questId)) return
+  if (!isDayKey(input.dayKey)) return
 
   state.daily.questId = input.questId
-  state.daily.dayKey = isDayKey(input.dayKey) ? input.dayKey : ''
-  state.daily.target = counter(input.target) ?? 0
-  state.daily.progress = Math.min(counter(input.progress) ?? 0, state.daily.target)
-  state.daily.completedAt = input.completedAt === null
-    ? null
-    : isIsoTimestamp(input.completedAt) ? input.completedAt : null
-  state.daily.stampAwarded = boolean(input.stampAwarded) ?? false
+  state.daily.dayKey = input.dayKey
+  const storedTarget = counter(input.target)
+  const hasValidStoredTarget = storedTarget !== null && storedTarget > 0
+  state.daily.target = hasValidStoredTarget
+    ? storedTarget
+    : BUILT_IN_QUEST_TARGETS[input.questId]
+
+  const storedProgress = counter(input.progress) ?? 0
+  const validCompletedAt = isIsoTimestamp(input.completedAt) ? input.completedAt : null
+  const storedStampAwarded = boolean(input.stampAwarded) === true
 
   if (input.questId === 'characters_3') {
     const acceptedCharacterIds = new Set(
       [...knownWeaponIds].filter((weaponId) => isCharacterWeaponId(weaponId))
     )
     state.daily.distinctIds = sortedKnownIds(input.distinctIds, acceptedCharacterIds)
+    state.daily.progress = Math.min(state.daily.distinctIds.length, state.daily.target)
+  } else {
+    state.daily.progress = Math.min(storedProgress, state.daily.target)
   }
+
+  const characterEvidenceComplete = input.questId !== 'characters_3'
+    || state.daily.distinctIds.length >= state.daily.target
+  const isConsistentCompletion = hasValidStoredTarget
+    && storedProgress === state.daily.target
+    && validCompletedAt !== null
+    && storedStampAwarded
+    && characterEvidenceComplete
+  state.daily.completedAt = isConsistentCompletion ? validCompletedAt : null
+  state.daily.stampAwarded = isConsistentCompletion
 }
 
 function parseProfile(state: ProgressStateV1, value: unknown): void {
