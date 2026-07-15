@@ -262,6 +262,34 @@ describe('ActionController gesture settlement', () => {
     expect(weapon.apply).toHaveBeenCalledTimes(2)
   })
 
+  it('rejects a superseded secondary tap without disturbing the fresh primary action', () => {
+    const h = harness()
+    const supersededWeapon = makeWeapon({ id: 'superseded' })
+    const freshWeapon = makeWeapon({ id: 'fresh' })
+    const world = makeWorld(h.target)
+
+    h.controller.handle({ type: 'press', id: 1, x: 10, y: 20 }, supersededWeapon, world)
+    h.controller.handle({ type: 'press', id: 2, x: 30, y: 40 }, supersededWeapon, world)
+    h.controller.handle({ type: 'tap', id: 1, x: 10, y: 20 }, supersededWeapon, world)
+    expect(supersededWeapon.apply).toHaveBeenCalledTimes(1)
+
+    h.controller.handle({ type: 'press', id: 3, x: 50, y: 60 }, freshWeapon, world)
+
+    expect(
+      h.controller.handle({ type: 'tap', id: 2, x: 30, y: 40 }, freshWeapon, world)
+    ).toBeNull()
+    expect(supersededWeapon.apply).toHaveBeenCalledTimes(1)
+    expect(h.settled).toHaveBeenCalledTimes(1)
+    expect(h.warn).not.toHaveBeenCalled()
+    expect(h.controller.state).toBe('pressed')
+
+    expect(
+      h.controller.handle({ type: 'tap', id: 3, x: 50, y: 60 }, freshWeapon, world)
+    ).toMatchObject({ kind: 'quick', weaponId: 'fresh' })
+    expect(freshWeapon.apply).toHaveBeenCalledTimes(1)
+    expect(h.settled).toHaveBeenCalledTimes(2)
+  })
+
   it('invokes the legacy bridge only for settled tap, drag, and charged release', () => {
     const h = harness()
     const weapon = makeWeapon()

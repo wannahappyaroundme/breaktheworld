@@ -325,6 +325,10 @@ export class ActionController {
     preserveController = false
   ): ActionResolution | null {
     if (!active || active.settled || !active.world) return null
+    if (!this.validActionIds.has(active.action.actionId)) {
+      this.validActionIds.delete(active.action.actionId)
+      return null
+    }
     if (active.action.targetRunId !== this.getTargetRunId()) {
       this.validActionIds.delete(active.action.actionId)
       if (!preserveController) this.cancel('system')
