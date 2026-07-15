@@ -1,3 +1,5 @@
+import type { DamageRequest, DamageResult } from '../combat/damage'
+
 export type DetachMode = 'fall' | 'dissolve' | 'squash'
 
 export interface Target {
@@ -10,6 +12,9 @@ export interface Target {
 
   update(dtSec: number, w: number, h: number): void
   draw(ctx: CanvasRenderingContext2D): void
+
+  readonly initialFragmentCount: number
+  applyDamage(request: DamageRequest): DamageResult
 
   /** Detach fragments within `radius` of (x,y). Returns how many came loose. */
   takeDamage(x: number, y: number, radius: number, force: number, mode?: DetachMode): number

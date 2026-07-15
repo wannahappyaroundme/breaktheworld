@@ -1,5 +1,13 @@
 import { Rng } from '../engine/rng'
 import { dist, easeOutBounce, TAU } from '../engine/math'
+import {
+  damageBudget,
+  matchesPattern,
+  pointToSegmentDistance,
+  type DamagePattern,
+  type DamageRequest,
+  type DamageResult,
+} from '../combat/damage'
 import { shatter, polyCentroid, type Pt } from './shatter'
 import type { Target, DetachMode } from './target'
 
@@ -171,6 +179,9 @@ export class Breakable implements Target {
   get attachedCount(): number {
     return this.attached.length
   }
+  get initialFragmentCount(): number {
+    return this.total
+  }
   get isDestroyed(): boolean {
     return this.attached.length <= Math.floor(this.total * 0.04)
   }
@@ -204,47 +215,116 @@ export class Breakable implements Target {
     this.detached.push(f)
   }
 
-  takeDamage(x: number, y: number, radius: number, force: number, mode: DetachMode = 'fall'): number {
-    let n = 0
+  applyDamage(request: DamageRequest): DamageResult {
+    const before = this.attached.length
+    if (before === 0) {
+      return {
+        detached: 0,
+        before,
+        remaining: 0,
+        initial: this.total,
+        destroyed: true,
+      }
+    }
+
+    const impact = patternCenter(request.pattern, { x: this.cx, y: this.cy })
+    let selected: Fragment[]
+
+    if (request.finish) {
+      selected = this.attached.slice()
+    } else {
+      const budget = damageBudget(this.total, before, request.minRatio, request.maxRatio)
+      const candidates = this.attached.filter((fragment) =>
+        matchesPattern(this.fragmentCenter(fragment), request.pattern)
+      )
+      const rng = new Rng(request.seed)
+      for (let i = candidates.length - 1; i > 0; i--) {
+        const j = rng.int(0, i)
+        ;[candidates[i], candidates[j]] = [candidates[j], candidates[i]]
+      }
+      selected = candidates.slice(0, budget.max)
+
+      if (selected.length < budget.min) {
+        const selectedSet = new Set(selected)
+        const nearest = this.attached
+          .map((fragment, index) => ({
+            fragment,
+            index,
+            distance: patternDistance(this.fragmentCenter(fragment), request.pattern),
+          }))
+          .filter(({ fragment }) => !selectedSet.has(fragment))
+          .sort((a, b) => a.distance - b.distance || a.index - b.index)
+
+        for (const { fragment } of nearest) {
+          selected.push(fragment)
+          if (selected.length === budget.min) break
+        }
+      }
+    }
+
+    const selectedSet = new Set(selected)
     const survivors: Fragment[] = []
-    for (const f of this.attached) {
-      const ax = this.originX + f.cxLocal
-      const ay = this.originY + f.cyLocal
-      if (dist(ax, ay, x, y) <= radius) {
-        this.detach(f, x, y, force, mode)
-        n++
+    for (const fragment of this.attached) {
+      if (selectedSet.has(fragment)) {
+        this.detach(fragment, impact.x, impact.y, request.force, request.mode)
       } else {
-        survivors.push(f)
+        survivors.push(fragment)
       }
     }
     this.attached = survivors
-    return n
+
+    return {
+      detached: selected.length,
+      before,
+      remaining: this.attached.length,
+      initial: this.total,
+      destroyed: this.isDestroyed,
+    }
+  }
+
+  takeDamage(x: number, y: number, radius: number, force: number, mode: DetachMode = 'fall'): number {
+    return this.applyDamage({
+      pattern: { kind: 'circle', x, y, radius },
+      minRatio: 0,
+      maxRatio: 1,
+      force,
+      mode,
+      seed: (Math.random() * 0xffffffff) >>> 0,
+      finish: false,
+    }).detached
   }
 
   detachAll(x: number, y: number, force: number, mode: DetachMode = 'fall'): number {
-    const n = this.attached.length
-    const list = this.attached
-    this.attached = []
-    for (const f of list) this.detach(f, x, y, force, mode)
-    return n
+    return this.applyDamage({
+      pattern: { kind: 'circle', x, y, radius: 0 },
+      minRatio: 0,
+      maxRatio: 1,
+      force,
+      mode,
+      seed: 0,
+      finish: true,
+    }).detached
   }
 
   detachFraction(frac: number, mode: DetachMode = 'dissolve'): number {
-    const list = this.attached.slice()
-    // shuffle
-    for (let i = list.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1))
-      ;[list[i], list[j]] = [list[j], list[i]]
+    const count = Math.floor(this.attached.length * frac)
+    const ratio = count / Math.max(1, this.total)
+    return this.applyDamage({
+      pattern: { kind: 'circle', x: this.cx, y: this.cy, radius: Infinity },
+      minRatio: ratio,
+      maxRatio: ratio,
+      force: 60,
+      mode,
+      seed: (Math.random() * 0xffffffff) >>> 0,
+      finish: false,
+    }).detached
+  }
+
+  private fragmentCenter(fragment: Fragment): Pt {
+    return {
+      x: this.originX + fragment.cxLocal,
+      y: this.originY + fragment.cyLocal,
     }
-    const k = Math.floor(list.length * frac)
-    const chosen = new Set(list.slice(0, k))
-    const survivors: Fragment[] = []
-    for (const f of this.attached) {
-      if (chosen.has(f)) this.detach(f, this.cx, this.cy, 60, mode)
-      else survivors.push(f)
-    }
-    this.attached = survivors
-    return k
   }
 
   update(dtSec: number, _w: number, h: number): void {
@@ -352,4 +432,41 @@ function insideArt(data: Uint8ClampedArray, w: number, h: number, x: number, y: 
   const px = Math.max(0, Math.min(w - 1, Math.round(x)))
   const py = Math.max(0, Math.min(h - 1, Math.round(y)))
   return data[(py * w + px) * 4 + 3] > 24
+}
+
+function patternCenter(pattern: DamagePattern, fallback: Pt): Pt {
+  if (pattern.kind === 'circle' || pattern.kind === 'ellipse') {
+    return { x: pattern.x, y: pattern.y }
+  }
+  if (pattern.kind === 'line') {
+    return { x: (pattern.x1 + pattern.x2) / 2, y: (pattern.y1 + pattern.y2) / 2 }
+  }
+  if (pattern.points.length === 0) return fallback
+  const total = pattern.points.reduce(
+    (sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }),
+    { x: 0, y: 0 }
+  )
+  return { x: total.x / pattern.points.length, y: total.y / pattern.points.length }
+}
+
+function patternDistance(point: Pt, pattern: DamagePattern): number {
+  if (pattern.kind === 'circle') return dist(point.x, point.y, pattern.x, pattern.y)
+  if (pattern.kind === 'line') {
+    return pointToSegmentDistance(
+      point,
+      { x: pattern.x1, y: pattern.y1 },
+      { x: pattern.x2, y: pattern.y2 }
+    )
+  }
+  if (pattern.kind === 'ellipse') {
+    const dx = point.x - pattern.x
+    const dy = point.y - pattern.y
+    const cos = Math.cos(pattern.rotation)
+    const sin = Math.sin(pattern.rotation)
+    return Math.hypot((dx * cos + dy * sin) / pattern.rx, (-dx * sin + dy * cos) / pattern.ry)
+  }
+  return pattern.points.reduce(
+    (nearest, center) => Math.min(nearest, dist(point.x, point.y, center.x, center.y)),
+    Infinity
+  )
 }
