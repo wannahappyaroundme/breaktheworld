@@ -1,90 +1,99 @@
+import { GestureMachine, type GestureEvent } from '../combat/gesture'
+
+/** Temporary compatibility type until Game moves to GestureEvent in Task 3. */
 export interface PointerHit {
   x: number
   y: number
-  /** 'down' = fresh tap/touch, 'drag' = moved while held */
   phase: 'down' | 'drag'
-  /** identifies the finger so weapons can track strokes */
   id: number
 }
 
 export type HitHandler = (hit: PointerHit) => void
+export type GestureHandler = (event: GestureEvent) => void
 
-/**
- * Touch-first input. Maps tap / swipe / multi-touch to PointerHit events.
- * Also supports mouse so it can be tested in a desktop browser, but the
- * design target is mobile.
- */
+/** Maps browser PointerEvents to DOM-free gesture events. */
 export class Input {
-  private el: HTMLElement
-  private onHit: HitHandler
-  private active = new Map<number, { x: number; y: number }>()
+  private machine = new GestureMachine()
+  private onGesture: GestureHandler
 
-  constructor(el: HTMLElement, onHit: HitHandler) {
-    this.el = el
-    this.onHit = onHit
-    this.attach()
+  /** Temporary Task 2 compatibility overload; Task 3 removes PointerHit. */
+  constructor(el: HTMLElement, onHit: HitHandler)
+  constructor(el: HTMLElement, onGesture: GestureHandler)
+  constructor(el: HTMLElement, handler: HitHandler | GestureHandler) {
+    this.onGesture = handler as GestureHandler
+    this.attach(el)
   }
 
-  private emit(id: number, x: number, y: number, phase: 'down' | 'drag') {
-    this.onHit({ id, x, y, phase })
+  update(nowMs: number): void {
+    this.emit(this.machine.update(nowMs))
   }
 
-  private attach() {
+  cancelAll(): void {
+    for (const event of this.machine.cancelAll()) this.onGesture(event)
+  }
+
+  private emit(event: GestureEvent | null): void {
+    if (event) this.onGesture(event)
+  }
+
+  private attach(el: HTMLElement): void {
     const opts: AddEventListenerOptions = { passive: false }
 
-    this.el.addEventListener(
-      'touchstart',
-      (e) => {
-        e.preventDefault()
-        for (const t of Array.from(e.changedTouches)) {
-          this.active.set(t.identifier, { x: t.clientX, y: t.clientY })
-          this.emit(t.identifier, t.clientX, t.clientY, 'down')
-        }
+    el.addEventListener(
+      'pointerdown',
+      (event) => {
+        event.preventDefault()
+        el.setPointerCapture(event.pointerId)
+        this.emit(
+          this.machine.begin(
+            event.pointerId,
+            event.clientX,
+            event.clientY,
+            event.timeStamp,
+            event.isPrimary
+          )
+        )
       },
       opts
     )
 
-    this.el.addEventListener(
-      'touchmove',
-      (e) => {
-        e.preventDefault()
-        for (const t of Array.from(e.changedTouches)) {
-          const prev = this.active.get(t.identifier)
-          // throttle by distance so a stroke spawns hits along its path
-          if (prev && Math.hypot(t.clientX - prev.x, t.clientY - prev.y) < 14) continue
-          this.active.set(t.identifier, { x: t.clientX, y: t.clientY })
-          this.emit(t.identifier, t.clientX, t.clientY, 'drag')
-        }
+    el.addEventListener(
+      'pointermove',
+      (event) => {
+        event.preventDefault()
+        this.emit(
+          this.machine.move(event.pointerId, event.clientX, event.clientY, event.timeStamp)
+        )
       },
       opts
     )
 
-    const end = (e: TouchEvent) => {
-      e.preventDefault()
-      for (const t of Array.from(e.changedTouches)) this.active.delete(t.identifier)
-    }
-    this.el.addEventListener('touchend', end, opts)
-    this.el.addEventListener('touchcancel', end, opts)
+    el.addEventListener(
+      'pointerup',
+      (event) => {
+        event.preventDefault()
+        this.emit(this.machine.end(event.pointerId, event.clientX, event.clientY, event.timeStamp))
+      },
+      opts
+    )
 
-    // --- mouse fallback (desktop testing only) ---
-    let mouseDown = false
-    let lastX = 0
-    let lastY = 0
-    this.el.addEventListener('mousedown', (e) => {
-      mouseDown = true
-      lastX = e.clientX
-      lastY = e.clientY
-      this.emit(-1, e.clientX, e.clientY, 'down')
+    el.addEventListener(
+      'pointercancel',
+      (event) => {
+        event.preventDefault()
+        this.emit(this.machine.cancel(event.pointerId))
+      },
+      opts
+    )
+
+    el.addEventListener('lostpointercapture', (event) => {
+      this.emit(this.machine.cancel(event.pointerId))
     })
-    this.el.addEventListener('mousemove', (e) => {
-      if (!mouseDown) return
-      if (Math.hypot(e.clientX - lastX, e.clientY - lastY) < 14) return
-      lastX = e.clientX
-      lastY = e.clientY
-      this.emit(-1, e.clientX, e.clientY, 'drag')
+
+    el.addEventListener('contextmenu', (event) => event.preventDefault())
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.cancelAll()
     })
-    window.addEventListener('mouseup', () => {
-      mouseDown = false
-    })
+    window.addEventListener('blur', () => this.cancelAll())
   }
 }
