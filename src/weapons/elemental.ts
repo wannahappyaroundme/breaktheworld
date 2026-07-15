@@ -236,7 +236,6 @@ const blackHole: Weapon = {
   name: '블랙홀',
   icon: '🕳️',
   mode: 'cinematic',
-  cooldown: 0.9,
   apply(w, x, y) {
     w.effects.add(blackhole(x, y, 180, { dur: 1.5 }))
     w.target.detachAll(x, y, 8, 'dissolve')

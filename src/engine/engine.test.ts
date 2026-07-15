@@ -6,6 +6,8 @@ import { TargetManager } from '../targets/manager'
 import type { Target } from '../targets/target'
 import { Breakable } from '../targets/breakable'
 import type { DamageRequest, DamageResult } from '../combat/damage'
+import { ActionController } from '../combat/action-controller'
+import type { Weapon } from '../weapons/weapon'
 
 beforeAll(() => {
   vi.stubGlobal('document', {
@@ -338,5 +340,67 @@ describe('TargetManager', () => {
     mgr.update(0.5, 100, 100) // timer elapses -> advance
     expect(mgr.current).not.toBe(first)
     expect(mgr.swapIndex).toBe(1)
+  })
+
+  it('increments targetRunId once for each public-flow replacement', () => {
+    let n = 0
+    const mgr = new TargetManager(
+      {
+        factories: [() => new StubTarget(n++), () => new StubTarget(n++)],
+        swapDelaySec: 0.5,
+      },
+      100,
+      100
+    )
+
+    expect(mgr.targetRunId).toBe(1)
+    mgr.skip(100, 100)
+    expect(mgr.targetRunId).toBe(1)
+    mgr.update(0.5, 100, 100)
+    expect(mgr.targetRunId).toBe(2)
+    mgr.reset(100, 100)
+    expect(mgr.targetRunId).toBe(3)
+    expect(mgr.swapIndex).toBe(0)
+  })
+
+  it('makes an active checked action stale when reset replaces with the first target type', () => {
+    let n = 0
+    const mgr = new TargetManager(
+      { factories: [() => new StubTarget(n++)] },
+      100,
+      100
+    )
+    const controller = new ActionController({
+      getTarget: () => mgr.current,
+      getTargetRunId: () => mgr.targetRunId,
+    })
+    const weapon: Weapon = {
+      id: 'test',
+      name: 'test',
+      icon: 'x',
+      mode: 'point',
+      apply: () => {},
+    }
+    const action = controller.start({
+      weapon,
+      targetRunId: mgr.targetRunId,
+      x: 10,
+      y: 20,
+      seed: 99,
+    })
+
+    mgr.reset(100, 100)
+
+    expect(mgr.swapIndex).toBe(0)
+    expect(
+      action.damage({
+        pattern: { kind: 'circle', x: 10, y: 20, radius: 10 },
+        minRatio: 0.2,
+        maxRatio: 0.2,
+        force: 10,
+        mode: 'fall',
+        finish: false,
+      })
+    ).toBeNull()
   })
 })

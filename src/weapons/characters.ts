@@ -129,7 +129,6 @@ const cinnamoroll: Weapon = {
   name: '시나모롤',
   icon: '☁️',
   mode: 'cinematic',
-  cooldown: 0.9,
   apply(w) {
     slam(w, charDraw('cinnamoroll', drawCinnamoroll), {
       size: 0.5,
@@ -145,7 +144,6 @@ const cat: Weapon = {
   name: '고양이',
   icon: '🐱',
   mode: 'cinematic',
-  cooldown: 0.9,
   apply(w) {
     slam(w, charDraw('cat', drawCat), {
       size: 0.5,
@@ -161,7 +159,6 @@ const pooh: Weapon = {
   name: '곰돌이 푸',
   icon: '🍯',
   mode: 'cinematic',
-  cooldown: 0.95,
   apply(w) {
     slam(w, charDraw('pooh', drawPooh), {
       size: 0.5,
@@ -187,7 +184,6 @@ const ditto: Weapon = {
   name: '메타몽',
   icon: '🟣',
   mode: 'cinematic',
-  cooldown: 0.9,
   apply(w) {
     slam(w, charDraw('ditto', drawDitto), {
       size: 0.5,
@@ -203,7 +199,6 @@ const thanos: Weapon = {
   name: '타노스',
   icon: '🫰',
   mode: 'cinematic',
-  cooldown: 1.1,
   apply(w) {
     const gx = w.target.cx
     const gy = Math.max(w.h * 0.3, w.target.cy - w.target.radius - 60)
@@ -242,7 +237,6 @@ const ironman: Weapon = {
   name: '아이언맨',
   icon: '🦾',
   mode: 'cinematic',
-  cooldown: 1.0,
   apply(w) {
     const size = Math.min(w.w, w.h) * 0.3
     const hx = w.w * 0.28
@@ -282,7 +276,6 @@ const hulk: Weapon = {
   name: '헐크',
   icon: '🟢',
   mode: 'cinematic',
-  cooldown: 1.0,
   apply(w) {
     const x = w.target.cx
     const y = w.target.cy
@@ -321,7 +314,6 @@ const godzilla: Weapon = {
   name: '고질라',
   icon: '🦖',
   mode: 'cinematic',
-  cooldown: 1.05,
   apply(w) {
     const tx = w.target.cx
     const ty = w.target.cy
@@ -361,7 +353,6 @@ const saiyan: Weapon = {
   name: '에너지파',
   icon: '🐉',
   mode: 'cinematic',
-  cooldown: 1.15,
   apply(w) {
     const tx = w.target.cx
     const ty = w.target.cy
@@ -413,7 +404,6 @@ const cinnamorollOld: Weapon = {
   name: '시나모롤(예전)',
   icon: '☁️',
   mode: 'cinematic',
-  cooldown: 0.9,
   apply(w) {
     slam(w, charDraw('cinnamorollOld', drawCinnamoroll), {
       size: 0.5,
@@ -429,7 +419,6 @@ const dittoOld: Weapon = {
   name: '메타몽(예전)',
   icon: '🟣',
   mode: 'cinematic',
-  cooldown: 0.9,
   apply(w) {
     slam(w, charDraw('dittoOld', drawDitto), {
       size: 0.5,

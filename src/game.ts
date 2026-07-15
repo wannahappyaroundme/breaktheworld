@@ -1,7 +1,9 @@
 import { Renderer } from './engine/renderer'
 import { GameLoop } from './engine/loop'
-import type { PointerHit } from './engine/input'
 import { Input } from './engine/input'
+import type { GestureEvent } from './combat/gesture'
+import { ActionController } from './combat/action-controller'
+import { ChargeVisual } from './combat/charge-visual'
 import { Camera } from './engine/camera'
 import { Particles } from './engine/particles'
 import { Audio } from './engine/audio'
@@ -42,6 +44,9 @@ export class Game {
   private audio = new Audio()
   private effects = new Effects()
   private manager: TargetManager
+  private controller: ActionController
+  private input: Input
+  private chargeVisual: ChargeVisual
   private weapon: Weapon
   private hud: Hud
   private whatsNew: WhatsNew
@@ -56,7 +61,6 @@ export class Game {
   private feverActive = false
   private feverTimer = 0
   private feverHue = 0
-  private cinematicCooldown = 0
   private hintHidden = false
   private hintEl: HTMLElement | null
 
@@ -71,7 +75,7 @@ export class Game {
       {
         factories: [createWord, createEarth, createCity],
         swapDelaySec: 0.8,
-        onDestroyed: (t) => this.celebrate(t),
+        onDestroyed: (t) => this.handleDestroyed(t),
         onSpawn: (t) => this.handleSpawn(t),
       },
       this.renderer.width,
@@ -81,6 +85,14 @@ export class Game {
     this.best = Number(localStorage.getItem(BEST_KEY) || '0') || 0
     this.totalTargets = Number(localStorage.getItem(STATS_KEY) || '0') || 0
     this.weapon = findWeapon(defaultWeaponId)
+    this.controller = new ActionController({
+      getTarget: () => this.manager.current,
+      getTargetRunId: () => this.manager.targetRunId,
+      onSettled: () => this.addCombo(),
+    })
+    this.chargeVisual = new ChargeVisual(
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    )
     this.whatsNew = new WhatsNew(uiRoot)
     this.hud = new Hud(uiRoot, {
       onToggleSound: this.onToggleSound,
@@ -95,7 +107,10 @@ export class Game {
     this.hintEl = document.getElementById('tap-hint')
     if (!location.search.includes('nonews')) this.whatsNew.maybeShowOnLoad()
 
-    new Input(canvas, (hit) => this.onHit(hit))
+    this.input = new Input(canvas, (event) => this.onGesture(event), 'gesture')
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.controller.cancel('visibility')
+    })
     window.addEventListener('resize', () =>
       this.manager.current.reposition(this.renderer.width, this.renderer.height)
     )
@@ -129,13 +144,16 @@ export class Game {
           this.hintHidden = true
           this.hintEl?.classList.add('hidden')
         }
-        this.weapon.apply(this.world(), t.cx + o[0], t.cy + o[1])
-        this.addCombo()
+        if (this.weapon.apply) {
+          this.weapon.apply(this.world(), t.cx + o[0], t.cy + o[1])
+          this.addCombo()
+        }
       }, 150 + i * 170)
     })
   }
 
   private selectWeapon(w: Weapon): void {
+    this.controller.cancel('weaponChange')
     this.weapon = w
     this.bar.select(w.id)
     this.hud.flashWeapon(w.name)
@@ -154,19 +172,15 @@ export class Game {
     }
   }
 
-  private onHit(hit: PointerHit): void {
-    this.audio.unlock()
-    if (!this.hintHidden) {
-      this.hintHidden = true
-      this.hintEl?.classList.add('hidden')
+  private onGesture(event: GestureEvent): void {
+    if (event.type === 'press') {
+      this.audio.unlock()
+      if (!this.hintHidden) {
+        this.hintHidden = true
+        this.hintEl?.classList.add('hidden')
+      }
     }
-    const w = this.weapon
-    if (w.mode === 'cinematic') {
-      if (hit.phase !== 'down' || this.cinematicCooldown > 0) return
-      this.cinematicCooldown = w.cooldown ?? 0.9
-    }
-    w.apply(this.world(), hit.x, hit.y)
-    this.addCombo()
+    this.controller.handle(event, this.weapon, this.world())
   }
 
   private haptic(pattern: number | number[]): void {
@@ -213,6 +227,11 @@ export class Game {
       t.setGolden(true)
       this.hud.toast('✨ 황금 타겟 등장! 부수면 보너스')
     }
+  }
+
+  private handleDestroyed(t: Target): void {
+    this.controller.cancel('targetDestroyed')
+    this.celebrate(t)
   }
 
   /** Enter (or refresh) the sustained FEVER mode at a combo peak. */
@@ -298,6 +317,9 @@ export class Game {
   }
 
   private frame(dtMs: number): void {
+    const nowMs = performance.now()
+    this.input.update(nowMs)
+    this.controller.update(nowMs)
     const realDt = dtMs / 1000
     // hit-stop: briefly slow the world for a punchy "freeze then burst"
     if (this.hitStop > 0) this.hitStop = Math.max(0, this.hitStop - realDt)
@@ -316,8 +338,7 @@ export class Game {
     }
 
     // timers run on real time (unaffected by hit-stop)
-    if (this.cinematicCooldown > 0) this.cinematicCooldown = Math.max(0, this.cinematicCooldown - realDt)
-    if (this.comboTimer > 0) {
+    if (this.comboTimer > 0 && !this.controller.hasComboGrace(nowMs)) {
       this.comboTimer -= realDt
       if (this.comboTimer <= 0 && this.combo > 0) {
         this.combo = 0
@@ -336,9 +357,22 @@ export class Game {
     this.renderer.clear()
     this.camera.begin(ctx)
     this.effects.drawBelow(ctx)
-    this.manager.current.draw(ctx)
+    const chargeState = this.controller.chargeState
+    const targetScale = this.chargeVisual.targetScale(chargeState)
+    if (targetScale === 1) {
+      this.manager.current.draw(ctx)
+    } else {
+      const target = this.manager.current
+      ctx.save()
+      ctx.translate(target.cx, target.cy)
+      ctx.scale(targetScale, targetScale)
+      ctx.translate(-target.cx, -target.cy)
+      target.draw(ctx)
+      ctx.restore()
+    }
     this.particles.draw(ctx)
     this.effects.drawAbove(ctx)
+    if (chargeState) this.chargeVisual.draw(ctx, chargeState)
     this.camera.end(ctx)
     this.camera.overlay(ctx, this.renderer.width, this.renderer.height)
     if (this.feverActive) this.drawFever(ctx)
@@ -350,6 +384,7 @@ export class Game {
   }
 
   private onReset = (): void => {
+    this.controller.cancel('reset')
     this.manager.reset(this.renderer.width, this.renderer.height)
     this.combo = 0
     this.recordActive = false
@@ -359,6 +394,7 @@ export class Game {
   }
 
   private onNext = (): void => {
+    this.controller.cancel('next')
     this.manager.skip(this.renderer.width, this.renderer.height)
   }
 

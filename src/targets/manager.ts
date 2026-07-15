@@ -19,6 +19,7 @@ export class TargetManager {
   private onSpawn?: (t: Target) => void
   private swapping = false
   private timer = 0
+  private runId = 1
 
   constructor(opts: TargetManagerOpts, w: number, h: number) {
     this.factories = opts.factories
@@ -47,10 +48,13 @@ export class TargetManager {
   }
 
   private advance(w: number, h: number): void {
-    this.i = (this.i + 1) % this.factories.length
-    this.current = this.factories[this.i](w, h)
-    this.current.reposition(w, h)
-    this.current.dropIn()
+    const nextIndex = (this.i + 1) % this.factories.length
+    const next = this.factories[nextIndex](w, h)
+    next.reposition(w, h)
+    next.dropIn()
+    this.i = nextIndex
+    this.current = next
+    this.runId++
     this.swapping = false
     this.onSpawn?.(this.current)
   }
@@ -73,5 +77,9 @@ export class TargetManager {
 
   get swapIndex(): number {
     return this.i
+  }
+
+  get targetRunId(): number {
+    return this.runId
   }
 }

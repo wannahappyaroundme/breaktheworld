@@ -3,6 +3,7 @@ import type { Particles } from '../engine/particles'
 import type { Effects } from '../effects/manager'
 import type { Camera } from '../engine/camera'
 import type { Audio } from '../engine/audio'
+import type { DamageRequest, DamageResult } from '../combat/damage'
 
 export interface World {
   target: Target
@@ -20,12 +21,24 @@ export interface World {
  */
 export type WeaponMode = 'point' | 'cinematic'
 
+export interface WeaponAction {
+  actionId: number
+  targetRunId: number
+  x: number
+  y: number
+  charge: number
+  seed: number
+  damage(request: Omit<DamageRequest, 'seed'>): DamageResult | null
+}
+
 export interface Weapon {
   id: string
   name: string
   icon: string
   mode: WeaponMode
-  /** cinematic re-trigger guard (seconds); 0 for point weapons */
-  cooldown?: number
-  apply(world: World, x: number, y: number): void
+  /** Temporary Task 3-5 bridge. Task 6 removes this member. */
+  apply?: (world: World, x: number, y: number) => void
+  quick?: (world: World, action: WeaponAction) => void
+  drag?: (world: World, action: WeaponAction) => void
+  charged?: (world: World, action: WeaponAction) => void
 }
