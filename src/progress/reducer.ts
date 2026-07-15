@@ -1,4 +1,5 @@
-import { isCharacterWeaponId, type GameEvent } from './events'
+import { BUILT_IN_CATALOG, type QuestCatalogSnapshot } from './catalog'
+import type { GameEvent } from './events'
 import type { ProgressStateV1, WeaponProgress } from './types'
 
 const MAX_COUNTER = Number.MAX_SAFE_INTEGER
@@ -128,34 +129,35 @@ function completionTimestamp(dayKey: string): string {
   return `${date}T00:00:00.000Z`
 }
 
-function advanceDaily(state: ProgressStateV1, event: GameEvent): void {
+function advanceDaily(
+  state: ProgressStateV1,
+  event: GameEvent,
+  catalog: QuestCatalogSnapshot
+): void {
   const daily = state.daily
   if (daily.target === 0 || daily.completedAt !== null) return
 
-  let nextProgress = daily.progress
-  let distinctIds = daily.distinctIds
-
-  if (
-    daily.questId === 'charged_finisher_2' &&
-    event.type === 'CHARGE_RELEASED' &&
-    clampCharge(event.charge) === 1
-  ) {
-    nextProgress = increment(nextProgress)
-  } else if (
-    daily.questId === 'characters_3' &&
-    event.type === 'WEAPON_USED' &&
-    isCharacterWeaponId(event.weaponId)
-  ) {
-    distinctIds = sortedIds([...distinctIds, event.weaponId])
-    nextProgress = Math.max(nextProgress, distinctIds.length)
-  } else if (daily.questId === 'targets_3' && event.type === 'TARGET_DESTROYED') {
-    nextProgress = increment(nextProgress)
-  } else {
+  const definition = catalog.quests.find((quest) => quest.id === daily.questId)
+  if (!definition) return
+  const normalizedEvent: GameEvent = event.type === 'CHARGE_RELEASED'
+    ? { ...event, charge: clampCharge(event.charge) }
+    : event
+  try {
+    if (!definition.accepts(normalizedEvent)) return
+  } catch {
     return
   }
 
-  daily.distinctIds = distinctIds
-  daily.progress = Math.min(safeCounter(nextProgress), daily.target)
+  if (definition.distinct === 'weaponId') {
+    if (event.type !== 'WEAPON_USED') return
+    daily.distinctIds = sortedIds([...daily.distinctIds, event.weaponId])
+    daily.progress = Math.min(
+      Math.max(daily.progress, daily.distinctIds.length),
+      daily.target
+    )
+  } else {
+    daily.progress = Math.min(increment(daily.progress), daily.target)
+  }
   if (daily.progress < daily.target) return
 
   daily.completedAt = completionTimestamp(daily.dayKey)
@@ -169,7 +171,11 @@ function hasUserSource(event: GameEvent): event is Exclude<GameEvent, { type: 'S
 }
 
 /** Reduces validated game outcomes without storage, clock, or DOM access. */
-export function reduceProgress(state: ProgressStateV1, event: GameEvent): ProgressStateV1 {
+export function reduceProgress(
+  state: ProgressStateV1,
+  event: GameEvent,
+  catalog: QuestCatalogSnapshot = BUILT_IN_CATALOG
+): ProgressStateV1 {
   if (hasUserSource(event) && event.source !== 'user') return state
   if (!hasValidSettlementIdentity(event)) return state
   if (event.type === 'ATTACK_RESOLVED' && (!Number.isFinite(event.detached) || event.detached <= 0)) {
@@ -222,7 +228,7 @@ export function reduceProgress(state: ProgressStateV1, event: GameEvent): Progre
       break
   }
 
-  advanceDaily(next, event)
+  advanceDaily(next, event, catalog)
   attachRecentKeys(next, keys, key)
   return next
 }

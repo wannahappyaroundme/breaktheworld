@@ -5,6 +5,17 @@ import type { ProgressStateV1 } from './types'
 export type BuiltInQuestId = 'charged_finisher_2' | 'characters_3' | 'targets_3'
 export type QuestEventType = 'CHARGE_RELEASED' | 'WEAPON_USED' | 'TARGET_DESTROYED'
 
+const SAFE_QUEST_ID = /^[a-z0-9_]{3,64}$/
+const QUEST_TARGET_MAX = 100
+
+/** Data-only shape accepted from remote configuration. Executable predicates are never remote data. */
+export interface QuestDefinitionInput {
+  readonly id: string
+  readonly copy: string
+  readonly event: QuestEventType
+  readonly target: number
+}
+
 export interface QuestDefinition {
   readonly id: string
   readonly copy: string
@@ -20,41 +31,81 @@ export interface QuestCatalogSnapshot {
 }
 
 export interface QuestCatalogProvider {
+  /**
+   * Implementations must validate remote enum rows and map each row through
+   * createQuestDefinition. Never deserialize, evaluate, or forward remote code.
+   */
   loadCatalog(): Promise<QuestCatalogSnapshot | null>
 }
 
-export const BUILT_IN_QUESTS = [
-  {
+export function isSafeQuestId(id: string): boolean {
+  return SAFE_QUEST_ID.test(id)
+}
+
+export function createQuestDefinition(input: QuestDefinitionInput): QuestDefinition {
+  if (
+    !isSafeQuestId(input.id)
+    || typeof input.copy !== 'string'
+    || input.copy.trim() === ''
+    || !Number.isSafeInteger(input.target)
+    || input.target < 1
+    || input.target > QUEST_TARGET_MAX
+  ) {
+    throw new TypeError('Invalid quest definition')
+  }
+
+  switch (input.event) {
+    case 'CHARGE_RELEASED':
+      return {
+        ...input,
+        distinct: undefined,
+        accepts: (event: GameEvent) => (
+          event.type === 'CHARGE_RELEASED' && event.source === 'user' && event.charge === 1
+        ),
+      }
+    case 'WEAPON_USED':
+      return {
+        ...input,
+        distinct: 'weaponId',
+        accepts: (event: GameEvent) => (
+          event.type === 'WEAPON_USED'
+          && event.source === 'user'
+          && isCharacterWeaponId(event.weaponId)
+        ),
+      }
+    case 'TARGET_DESTROYED':
+      return {
+        ...input,
+        distinct: undefined,
+        accepts: (event: GameEvent) => (
+          event.type === 'TARGET_DESTROYED' && event.source === 'user'
+        ),
+      }
+    default:
+      throw new TypeError('Invalid quest event type')
+  }
+}
+
+export const BUILT_IN_QUESTS: readonly QuestDefinition[] = [
+  createQuestDefinition({
     id: 'charged_finisher_2',
     copy: '꾹 와장창 2번',
     event: 'CHARGE_RELEASED',
     target: 2,
-    distinct: undefined,
-    accepts: (event: GameEvent) => (
-      event.type === 'CHARGE_RELEASED' && event.source === 'user' && event.charge === 1
-    ),
-  },
-  {
+  }),
+  createQuestDefinition({
     id: 'characters_3',
     copy: '캐릭터 3종 만나기',
     event: 'WEAPON_USED',
     target: 3,
-    distinct: 'weaponId',
-    accepts: (event: GameEvent) => (
-      event.type === 'WEAPON_USED'
-      && event.source === 'user'
-      && isCharacterWeaponId(event.weaponId)
-    ),
-  },
-  {
+  }),
+  createQuestDefinition({
     id: 'targets_3',
     copy: '타겟 3개 부수기',
     event: 'TARGET_DESTROYED',
     target: 3,
-    distinct: undefined,
-    accepts: (event: GameEvent) => event.type === 'TARGET_DESTROYED' && event.source === 'user',
-  },
-] as const satisfies readonly QuestDefinition[]
+  }),
+]
 
 export const BUILT_IN_CATALOG: QuestCatalogSnapshot = {
   version: 1,
@@ -69,14 +120,16 @@ function isUsableCatalog(catalog: QuestCatalogSnapshot): boolean {
   for (const quest of catalog.quests) {
     if (
       typeof quest.id !== 'string'
-      || quest.id === ''
+      || !isSafeQuestId(quest.id)
       || ids.has(quest.id)
       || typeof quest.copy !== 'string'
-      || quest.copy === ''
+      || quest.copy.trim() === ''
       || !['CHARGE_RELEASED', 'WEAPON_USED', 'TARGET_DESTROYED'].includes(quest.event)
       || !Number.isSafeInteger(quest.target)
       || quest.target <= 0
+      || quest.target > QUEST_TARGET_MAX
       || (quest.distinct !== undefined && quest.distinct !== 'weaponId')
+      || (quest.event === 'WEAPON_USED') !== (quest.distinct === 'weaponId')
       || typeof quest.accepts !== 'function'
     ) {
       return false
@@ -86,7 +139,7 @@ function isUsableCatalog(catalog: QuestCatalogSnapshot): boolean {
   return true
 }
 
-export function findBuiltInQuest(id: string): (typeof BUILT_IN_QUESTS)[number] | undefined {
+export function findBuiltInQuest(id: string): QuestDefinition | undefined {
   return BUILT_IN_QUESTS.find((quest) => quest.id === id)
 }
 
@@ -142,7 +195,7 @@ export function assignDailyQuest(
 
 export type DailyNoticeTransition = 'first' | 'half' | 'complete'
 
-/** Returns milestone crossings only; unchanged/reloaded daily state emits nothing. */
+/** Returns at most one milestone, prioritizing completion over first and half. */
 export function dailyNoticeTransitions(
   previous: ProgressStateV1['daily'],
   next: ProgressStateV1['daily']
@@ -154,21 +207,19 @@ export function dailyNoticeTransitions(
     return []
   }
 
-  const transitions: DailyNoticeTransition[] = []
-  const progressIncreased = next.progress > previous.progress
-  if (progressIncreased && previous.progress === 0) transitions.push('first')
+  const wasComplete = previous.completedAt !== null && previous.stampAwarded
+  const isComplete = next.completedAt !== null && next.stampAwarded
+  if (!wasComplete && isComplete) return ['complete']
+  if (next.progress <= previous.progress) return []
+  if (previous.progress === 0) return ['first']
   if (
-    progressIncreased
-    && next.target > 0
+    next.target > 0
     && previous.progress * 2 < next.target
     && next.progress * 2 >= next.target
   ) {
-    transitions.push('half')
+    return ['half']
   }
-  const wasComplete = previous.completedAt !== null && previous.stampAwarded
-  const isComplete = next.completedAt !== null && next.stampAwarded
-  if (!wasComplete && isComplete) transitions.push('complete')
-  return transitions
+  return []
 }
 
 export type AchievementId =

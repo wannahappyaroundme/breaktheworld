@@ -1,6 +1,12 @@
 import { isCharacterWeaponId } from './events'
 import { createDefaultProgress } from './defaults'
-import { ACHIEVEMENTS, findBuiltInQuest } from './catalog'
+import {
+  ACHIEVEMENTS,
+  BUILT_IN_CATALOG,
+  findBuiltInQuest,
+  isSafeQuestId,
+  type QuestCatalogSnapshot,
+} from './catalog'
 import type { ProgressStateV1 } from './types'
 
 const TITLES: ReadonlySet<string> = new Set(ACHIEVEMENTS.map((achievement) => achievement.name))
@@ -123,43 +129,54 @@ function parseAchievements(state: ProgressStateV1, value: unknown): void {
 function parseDaily(
   state: ProgressStateV1,
   value: unknown,
-  knownWeaponIds: ReadonlySet<string>
+  knownWeaponIds: ReadonlySet<string>,
+  catalog: QuestCatalogSnapshot
 ): void {
   const input = record(value)
   if (!input || typeof input.questId !== 'string') return
-  const quest = findBuiltInQuest(input.questId)
-  if (!quest) return
+  if (!isSafeQuestId(input.questId)) return
   if (!isDayKey(input.dayKey)) return
+
+  const builtInQuest = findBuiltInQuest(input.questId)
+  const quest = builtInQuest ?? catalog.quests.find((candidate) => candidate.id === input.questId)
+  const storedTarget = counter(input.target)
+  const hasValidStoredTarget = (
+    storedTarget !== null
+    && storedTarget >= 1
+    && storedTarget <= 100
+  )
+  if (!builtInQuest && !hasValidStoredTarget) return
 
   state.daily.questId = input.questId
   state.daily.dayKey = input.dayKey
-  const storedTarget = counter(input.target)
-  const hasValidStoredTarget = storedTarget !== null && storedTarget > 0
   state.daily.target = hasValidStoredTarget
-    ? storedTarget
-    : quest.target
+    ? storedTarget!
+    : builtInQuest!.target
 
   const storedProgress = counter(input.progress) ?? 0
   const validCompletedAt = isIsoTimestamp(input.completedAt) ? input.completedAt : null
   const storedStampAwarded = boolean(input.stampAwarded) === true
 
-  if (input.questId === 'characters_3') {
+  if (quest?.distinct === 'weaponId') {
     const acceptedCharacterIds = new Set(
       [...knownWeaponIds].filter((weaponId) => isCharacterWeaponId(weaponId))
     )
     state.daily.distinctIds = sortedKnownIds(input.distinctIds, acceptedCharacterIds)
     state.daily.progress = Math.min(state.daily.distinctIds.length, state.daily.target)
   } else {
+    state.daily.distinctIds = quest === undefined
+      ? sortedKnownIds(input.distinctIds, knownWeaponIds)
+      : []
     state.daily.progress = Math.min(storedProgress, state.daily.target)
   }
 
-  const characterEvidenceComplete = input.questId !== 'characters_3'
+  const distinctEvidenceComplete = quest?.distinct !== 'weaponId'
     || state.daily.distinctIds.length >= state.daily.target
   const isConsistentCompletion = hasValidStoredTarget
     && storedProgress === state.daily.target
     && validCompletedAt !== null
     && storedStampAwarded
-    && characterEvidenceComplete
+    && distinctEvidenceComplete
   state.daily.completedAt = isConsistentCompletion ? validCompletedAt : null
   state.daily.stampAwarded = isConsistentCompletion
 }
@@ -188,11 +205,12 @@ function parseProfile(state: ProgressStateV1, value: unknown): void {
   state.profile.haptics = boolean(input.haptics) ?? state.profile.haptics
 }
 
-/** Recovers each valid progress field without allowing unknown catalog IDs through. */
+/** Recovers valid progress while retaining bounded data-only custom daily quests. */
 export function parseProgress(
   raw: unknown,
   knownWeaponIds: readonly string[],
-  knownMoveIds: readonly string[]
+  knownMoveIds: readonly string[],
+  catalog: QuestCatalogSnapshot = BUILT_IN_CATALOG
 ): ProgressStateV1 {
   const input = record(raw)
   if (!input) return createDefaultProgress('')
@@ -207,7 +225,7 @@ export function parseProgress(
   parseByWeapon(state, input.byWeapon, knownWeaponIds, moveIds)
   parseByTarget(state, input.byTarget)
   parseAchievements(state, input.achievements)
-  parseDaily(state, input.daily, weaponIds)
+  parseDaily(state, input.daily, weaponIds, catalog)
   parseProfile(state, input.profile)
   return state
 }

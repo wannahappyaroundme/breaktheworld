@@ -4,12 +4,14 @@ import { createCharacterWeapons } from '../weapons/characters'
 import { createDefaultProgress } from './defaults'
 import { isCharacterWeaponId, type GameEvent } from './events'
 import { kstDayKey } from './day'
+import { reduceProgress } from './reducer'
 import {
   ACHIEVEMENTS,
   BUILT_IN_CATALOG,
   BUILT_IN_QUESTS,
   achievementProgress,
   assignDailyQuest,
+  createQuestDefinition,
   dailyNoticeTransitions,
   resolveQuestCatalog,
   unlockAchievements,
@@ -28,7 +30,10 @@ const charge = (source: 'user' | 'demo' | 'system', value: number): GameEvent =>
   charge: value,
 })
 
-const use = (source: 'user' | 'demo' | 'system', weaponId: string): GameEvent => ({
+const use = (
+  source: 'user' | 'demo' | 'system',
+  weaponId: string
+): Extract<GameEvent, { type: 'WEAPON_USED' }> => ({
   type: 'WEAPON_USED',
   source,
   actionId: 1,
@@ -36,7 +41,9 @@ const use = (source: 'user' | 'demo' | 'system', weaponId: string): GameEvent =>
   weaponId,
 })
 
-const destroy = (source: 'user' | 'demo' | 'system'): GameEvent => ({
+const destroy = (
+  source: 'user' | 'demo' | 'system'
+): Extract<GameEvent, { type: 'TARGET_DESTROYED' }> => ({
   type: 'TARGET_DESTROYED',
   source,
   actionId: 1,
@@ -181,6 +188,150 @@ describe('quest catalog', () => {
         quests: [{ ...BUILT_IN_QUESTS[0], target: 0 }],
       }),
     })).resolves.toBe(BUILT_IN_CATALOG)
+
+    const invalidCatalogs = [
+      { version: 9, quests: [] },
+      { version: 0, quests: [BUILT_IN_QUESTS[0]] },
+      { version: 9, quests: [BUILT_IN_QUESTS[0], BUILT_IN_QUESTS[0]] },
+      { version: 9, quests: [{ ...BUILT_IN_QUESTS[0], event: 'TICK' }] },
+      { version: 9, quests: [{ ...BUILT_IN_QUESTS[0], distinct: 'targetId' }] },
+      {
+        version: 9,
+        quests: [{
+          id: 'custom_charge_2',
+          copy: '꾹 와장창 2번',
+          event: 'CHARGE_RELEASED',
+          target: 2,
+          distinct: undefined,
+        }],
+      },
+    ]
+    for (const catalog of invalidCatalogs) {
+      await expect(resolveQuestCatalog({
+        loadCatalog: async () => catalog as unknown as QuestCatalogSnapshot,
+      })).resolves.toBe(BUILT_IN_CATALOG)
+    }
+  })
+})
+
+describe('custom daily quest reconnect', () => {
+  it('uses a local fixed predicate for custom definitions and never remote function code', () => {
+    const custom = createQuestDefinition({
+      id: 'custom_targets_2',
+      copy: '타겟 2개 부수기',
+      event: 'TARGET_DESTROYED',
+      target: 2,
+      accepts: () => true,
+    } as Parameters<typeof createQuestDefinition>[0] & { accepts: () => boolean })
+
+    expect(custom.distinct).toBeUndefined()
+    expect(custom.accepts(destroy('user'))).toBe(true)
+    expect(custom.accepts(destroy('demo'))).toBe(false)
+    expect(custom.accepts(use('user', 'cinnamoroll'))).toBe(false)
+  })
+
+  it('assigns, serializes, restores, fixes same-day assignment, and completes a custom quest', () => {
+    const custom = createQuestDefinition({
+      id: 'custom_targets_2',
+      copy: '타겟 2개 부수기',
+      event: 'TARGET_DESTROYED',
+      target: 2,
+    })
+    const customCatalog: QuestCatalogSnapshot = { version: 4, quests: [custom] }
+    const assigned = assignDailyQuest(createDefaultProgress('install-custom'), '2026-07-17', customCatalog)
+    expect(assigned.daily).toMatchObject({
+      questId: 'custom_targets_2',
+      target: 2,
+      progress: 0,
+    })
+
+    const restored = parseProgress(
+      JSON.parse(JSON.stringify(assigned)) as unknown,
+      ['hammer'],
+      [],
+      customCatalog
+    )
+    expect(restored.daily).toEqual(assigned.daily)
+    expect(assignDailyQuest(restored, '2026-07-17', BUILT_IN_CATALOG)).toBe(restored)
+
+    const changedTargetCatalog: QuestCatalogSnapshot = {
+      version: 5,
+      quests: [createQuestDefinition({
+        id: 'custom_targets_2',
+        copy: '타겟 5개 부수기',
+        event: 'TARGET_DESTROYED',
+        target: 5,
+      })],
+    }
+    const demo = reduceProgress(restored, {
+      ...destroy('demo'),
+      actionId: 1,
+      targetRunId: 1,
+    }, changedTargetCatalog)
+    expect(demo).toBe(restored)
+    const wrongEvent = reduceProgress(restored, {
+      ...use('user', 'cinnamoroll'),
+      actionId: 2,
+      targetRunId: 1,
+    }, changedTargetCatalog)
+    expect(wrongEvent.daily.progress).toBe(0)
+
+    const once = reduceProgress(wrongEvent, {
+      ...destroy('user'),
+      actionId: 3,
+      targetRunId: 1,
+    }, changedTargetCatalog)
+    expect(once.daily.progress).toBe(1)
+    const complete = reduceProgress(once, {
+      ...destroy('user'),
+      actionId: 4,
+      targetRunId: 1,
+    }, changedTargetCatalog)
+    expect(complete.daily).toMatchObject({
+      progress: 2,
+      target: 2,
+      stampAwarded: true,
+    })
+    expect(complete.daily.completedAt).not.toBeNull()
+    expect(complete.lifetime.stamps).toBe(1)
+  })
+
+  it('preserves safe unknown custom progress and resets invalid custom IDs or targets', () => {
+    const rawDaily = {
+      dayKey: '2026-07-17',
+      questId: 'custom_safe_4',
+      target: 4,
+      progress: 2,
+      distinctIds: ['hammer'],
+      completedAt: null,
+      stampAwarded: false,
+    }
+    const safe = parseProgress({
+      installSeed: 'seed',
+      lifetime: { validHits: 8 },
+      daily: rawDaily,
+    }, ['hammer'], [])
+    expect(safe.daily).toEqual(rawDaily)
+    expect(safe.lifetime.validHits).toBe(8)
+
+    const completedDaily = {
+      ...rawDaily,
+      progress: 4,
+      completedAt: '2026-07-17T00:00:00.000Z',
+      stampAwarded: true,
+    }
+    expect(parseProgress({ installSeed: 'seed', daily: completedDaily }, ['hammer'], []).daily)
+      .toEqual(completedDaily)
+
+    for (const dailyInput of [
+      { ...rawDaily, questId: 'Bad-ID' },
+      { ...rawDaily, questId: 'ab' },
+      { ...rawDaily, target: 101 },
+      { ...rawDaily, target: 0 },
+    ]) {
+      const parsed = parseProgress({ installSeed: 'seed', daily: dailyInput }, ['hammer'], [])
+      expect(parsed.daily).toEqual(createDefaultProgress('seed').daily)
+    }
   })
 })
 
@@ -261,7 +412,17 @@ describe('daily assignment and notices', () => {
     expect(dailyNoticeTransitions(complete, complete)).toEqual([])
     expect(dailyNoticeTransitions(half, half)).toEqual([])
     expect(dailyNoticeTransitions({ ...half, dayKey: '2026-07-15' }, complete)).toEqual([])
-    expect(dailyNoticeTransitions(base, { ...base, target: 2, progress: 1 })).toEqual(['first', 'half'])
+    const targetTwo = { ...base, target: 2, progress: 0 }
+    const targetTwoFirst = { ...targetTwo, progress: 1 }
+    const targetTwoComplete = {
+      ...targetTwo,
+      progress: 2,
+      completedAt: '2026-07-16T00:00:00.000Z',
+      stampAwarded: true,
+    }
+    expect(dailyNoticeTransitions(targetTwo, targetTwoFirst)).toEqual(['first'])
+    expect(dailyNoticeTransitions(targetTwoFirst, targetTwoComplete)).toEqual(['complete'])
+    expect(dailyNoticeTransitions(targetTwo, targetTwoComplete)).toEqual(['complete'])
     expect(dailyNoticeTransitions(
       { ...complete, completedAt: null, stampAwarded: false },
       complete

@@ -194,13 +194,13 @@ describe('parseProgress', () => {
     expect(parsed.daily.distinctIds).toEqual([])
   })
 
-  it('resets only the daily challenge when its ID is unknown', () => {
+  it('resets only the daily challenge when its ID is unsafe', () => {
     const parsed = parseProgress({
       installSeed: 'seed',
       lifetime: { validHits: 7 },
       daily: {
         dayKey: '2026-07-16',
-        questId: 'mystery',
+        questId: 'Mystery',
         target: 9,
         progress: 7,
         distinctIds: ['cinnamoroll'],
