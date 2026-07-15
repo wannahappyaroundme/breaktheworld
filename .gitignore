@@ -18,6 +18,7 @@ npm-debug.log*
 *.key
 *.p12
 secrets/
+config/credentials*
 
 # editor
 .vscode/*

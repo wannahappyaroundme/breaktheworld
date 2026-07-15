@@ -13,9 +13,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.109.0",
     "roughjs": "^4.6.6"
   },
   "devDependencies": {
+    "supabase": "^2.109.1",
     "typescript": "^5.4.5",
     "vite": "^5.2.11",
     "vitest": "^1.6.0"

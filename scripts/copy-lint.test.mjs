@@ -111,8 +111,11 @@ test('finds forbidden copy in HTML attributes and visible text', () => {
   )
 })
 
-test('limits the production scan to index.html and non-test TypeScript sources', () => {
+test('limits the production scan to root HTML entries and non-test TypeScript sources', () => {
   assert.equal(isScannablePath('index.html'), true)
+  assert.equal(isScannablePath('admin.html'), true)
+  assert.equal(isScannablePath('future-entry.html'), true)
+  assert.equal(isScannablePath('docs/example.html'), false)
   assert.equal(isScannablePath('src/ui/hud.ts'), true)
   assert.equal(isScannablePath('src/ui/hud.test.ts'), false)
   assert.equal(isScannablePath('src/__tests__/fixture.ts'), false)

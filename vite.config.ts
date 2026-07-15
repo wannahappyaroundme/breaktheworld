@@ -8,6 +8,12 @@ export default defineConfig(({ command }) => ({
   build: {
     target: 'es2020',
     outDir: 'dist',
+    rollupOptions: {
+      input: {
+        game: 'index.html',
+        admin: 'admin.html',
+      },
+    },
   },
   test: {
     environment: 'node',

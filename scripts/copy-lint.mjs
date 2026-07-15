@@ -198,7 +198,7 @@ export function findForbiddenHits(file, source) {
 
 export function isScannablePath(file) {
   const normalized = file.replaceAll('\\', '/')
-  if (normalized === 'index.html') return true
+  if (!normalized.includes('/') && normalized.endsWith('.html')) return true
   if (!normalized.startsWith('src/') || !normalized.endsWith('.ts')) return false
   if (/\.(test|spec)\.ts$/.test(normalized)) return false
   if (/\/(?:__tests__|fixtures?)\//.test(normalized)) return false
@@ -218,7 +218,10 @@ async function walk(directory) {
 
 async function main() {
   const root = process.cwd()
-  const absoluteFiles = [path.join(root, 'index.html'), ...(await walk(path.join(root, 'src')))]
+  const rootHtmlFiles = (await readdir(root, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && isScannablePath(entry.name))
+    .map((entry) => path.join(root, entry.name))
+  const absoluteFiles = [...rootHtmlFiles, ...(await walk(path.join(root, 'src')))]
   const files = absoluteFiles
     .map((absolute) => ({ absolute, relative: path.relative(root, absolute).replaceAll('\\', '/') }))
     .filter(({ relative }) => isScannablePath(relative))
