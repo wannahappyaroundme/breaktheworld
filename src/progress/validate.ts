@@ -156,16 +156,16 @@ function parseDaily(
   const storedProgress = counter(input.progress) ?? 0
   const validCompletedAt = isIsoTimestamp(input.completedAt) ? input.completedAt : null
   const storedStampAwarded = boolean(input.stampAwarded) === true
+  const acceptedCharacterIds = new Set(
+    [...knownWeaponIds].filter((weaponId) => isCharacterWeaponId(weaponId))
+  )
 
   if (quest?.distinct === 'weaponId') {
-    const acceptedCharacterIds = new Set(
-      [...knownWeaponIds].filter((weaponId) => isCharacterWeaponId(weaponId))
-    )
     state.daily.distinctIds = sortedKnownIds(input.distinctIds, acceptedCharacterIds)
     state.daily.progress = Math.min(state.daily.distinctIds.length, state.daily.target)
   } else {
     state.daily.distinctIds = quest === undefined
-      ? sortedKnownIds(input.distinctIds, knownWeaponIds)
+      ? sortedKnownIds(input.distinctIds, acceptedCharacterIds)
       : []
     state.daily.progress = Math.min(storedProgress, state.daily.target)
   }

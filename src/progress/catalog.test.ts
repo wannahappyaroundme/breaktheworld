@@ -311,7 +311,7 @@ describe('custom daily quest reconnect', () => {
       lifetime: { validHits: 8 },
       daily: rawDaily,
     }, ['hammer'], [])
-    expect(safe.daily).toEqual(rawDaily)
+    expect(safe.daily).toEqual({ ...rawDaily, distinctIds: [] })
     expect(safe.lifetime.validHits).toBe(8)
 
     const completedDaily = {
@@ -321,7 +321,7 @@ describe('custom daily quest reconnect', () => {
       stampAwarded: true,
     }
     expect(parseProgress({ installSeed: 'seed', daily: completedDaily }, ['hammer'], []).daily)
-      .toEqual(completedDaily)
+      .toEqual({ ...completedDaily, distinctIds: [] })
 
     for (const dailyInput of [
       { ...rawDaily, questId: 'Bad-ID' },

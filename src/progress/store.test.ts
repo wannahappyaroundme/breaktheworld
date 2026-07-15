@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
+import { CHARACTER_IDS } from '../weapons/character-ids'
+import { createQuestDefinition, type QuestCatalogSnapshot } from './catalog'
 import { createDefaultProgress } from './defaults'
 import { reduceProgress } from './reducer'
 import { ProgressStore, PROGRESS_STORAGE_KEY, type CheckpointReason, type StorageAdapter } from './store'
@@ -6,6 +8,15 @@ import { parseProgress } from './validate'
 
 const KNOWN_WEAPONS = ['hammer', 'fire', 'cinnamoroll', 'ditto', 'dragonball'] as const
 const KNOWN_MOVES = ['bonk', 'flame', 'cloudBounce'] as const
+const CUSTOM_CHARACTER_CATALOG: QuestCatalogSnapshot = {
+  version: 7,
+  quests: [createQuestDefinition({
+    id: 'custom_characters_2',
+    copy: '캐릭터 2종 만나기',
+    event: 'WEAPON_USED',
+    target: 2,
+  })],
+}
 
 class FakeStorage implements StorageAdapter {
   readonly operations: string[] = []
@@ -53,6 +64,41 @@ function options(onMemoryFallback: () => void = vi.fn()) {
     knownMoveIds: KNOWN_MOVES,
     createInstallSeed: () => 'fixed-install-seed',
     onMemoryFallback,
+  }
+}
+
+function savedCustomCharacters(
+  overrides: Partial<ReturnType<typeof createDefaultProgress>['daily']> = {}
+) {
+  const state = createDefaultProgress('saved-custom-seed')
+  state.daily = {
+    dayKey: '2026-07-17',
+    questId: 'custom_characters_2',
+    target: 2,
+    progress: 1,
+    distinctIds: ['hammer'],
+    completedAt: null,
+    stampAwarded: false,
+    ...overrides,
+  }
+  return state
+}
+
+function loadCustomCharacters(state: ReturnType<typeof createDefaultProgress>) {
+  const storage = new FakeStorage({ [PROGRESS_STORAGE_KEY]: JSON.stringify(state) })
+  return new ProgressStore(storage, {
+    ...options(),
+    knownWeaponIds: ['hammer', ...CHARACTER_IDS],
+  }).load().state
+}
+
+function useCharacter(weaponId: string, actionId: number) {
+  return {
+    type: 'WEAPON_USED' as const,
+    source: 'user' as const,
+    actionId,
+    targetRunId: 1,
+    weaponId,
   }
 }
 
@@ -367,6 +413,118 @@ describe('parseProgress', () => {
 })
 
 describe('ProgressStore load and migration', () => {
+  it('does not reconnect a custom character quest with a non-character distinct credit', () => {
+    const loaded = loadCustomCharacters(savedCustomCharacters())
+
+    expect(loaded.daily).toMatchObject({ progress: 1, distinctIds: [] })
+
+    const first = reduceProgress(
+      loaded,
+      useCharacter('cinnamoroll', 1),
+      CUSTOM_CHARACTER_CATALOG
+    )
+    expect(first.daily).toMatchObject({
+      progress: 1,
+      distinctIds: ['cinnamoroll'],
+      completedAt: null,
+      stampAwarded: false,
+    })
+    expect(first.lifetime.stamps).toBe(0)
+
+    const second = reduceProgress(first, useCharacter('ditto', 2), CUSTOM_CHARACTER_CATALOG)
+    expect(second.daily).toMatchObject({
+      progress: 2,
+      distinctIds: ['cinnamoroll', 'ditto'],
+      stampAwarded: true,
+    })
+    expect(second.daily.completedAt).not.toBeNull()
+    expect(second.lifetime.stamps).toBe(1)
+  })
+
+  it('preserves valid custom character evidence so the next new character completes it', () => {
+    const loaded = loadCustomCharacters(savedCustomCharacters({
+      distinctIds: ['cinnamoroll'],
+    }))
+
+    expect(loaded.daily).toMatchObject({ progress: 1, distinctIds: ['cinnamoroll'] })
+    const completed = reduceProgress(
+      loaded,
+      useCharacter('ditto', 1),
+      CUSTOM_CHARACTER_CATALOG
+    )
+
+    expect(completed.daily).toMatchObject({
+      progress: 2,
+      distinctIds: ['cinnamoroll', 'ditto'],
+      stampAwarded: true,
+    })
+    expect(completed.lifetime.stamps).toBe(1)
+  })
+
+  it('clears a ghost custom completion before testing the incoming event rule', () => {
+    const saved = savedCustomCharacters({
+      progress: 2,
+      distinctIds: ['cinnamoroll'],
+      completedAt: '2026-07-17T01:02:03.000Z',
+      stampAwarded: true,
+    })
+    saved.lifetime.stamps = 4
+    const loaded = loadCustomCharacters(saved)
+
+    const normalized = reduceProgress(loaded, {
+      type: 'TARGET_DESTROYED',
+      source: 'user',
+      actionId: 1,
+      targetRunId: 1,
+      weaponId: 'hammer',
+      targetId: 'word',
+      golden: false,
+    }, CUSTOM_CHARACTER_CATALOG)
+    expect(normalized.daily).toMatchObject({
+      progress: 1,
+      distinctIds: ['cinnamoroll'],
+      completedAt: null,
+      stampAwarded: false,
+    })
+    expect(normalized.lifetime.stamps).toBe(4)
+
+    const completed = reduceProgress(
+      normalized,
+      useCharacter('ditto', 2),
+      CUSTOM_CHARACTER_CATALOG
+    )
+    expect(completed.daily).toMatchObject({ progress: 2, stampAwarded: true })
+    expect(completed.lifetime.stamps).toBe(5)
+  })
+
+  it('keeps a custom completion backed by enough valid character evidence', () => {
+    const completedAt = '2026-07-17T01:02:03.000Z'
+    const saved = savedCustomCharacters({
+      progress: 2,
+      distinctIds: ['ditto', 'cinnamoroll', 'ditto'],
+      completedAt,
+      stampAwarded: true,
+    })
+    saved.lifetime.stamps = 4
+    const loaded = loadCustomCharacters(saved)
+    const afterUse = reduceProgress(
+      loaded,
+      useCharacter('hulk', 1),
+      CUSTOM_CHARACTER_CATALOG
+    )
+
+    expect(afterUse.daily).toEqual({
+      dayKey: '2026-07-17',
+      questId: 'custom_characters_2',
+      target: 2,
+      progress: 2,
+      distinctIds: ['cinnamoroll', 'ditto'],
+      completedAt,
+      stampAwarded: true,
+    })
+    expect(afterUse.lifetime.stamps).toBe(4)
+  })
+
   it('creates and persists a deterministic new-install state', () => {
     const storage = new FakeStorage()
     const store = new ProgressStore(storage, options())

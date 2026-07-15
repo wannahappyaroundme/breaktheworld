@@ -1,5 +1,5 @@
 import { BUILT_IN_CATALOG, type QuestCatalogSnapshot } from './catalog'
-import type { GameEvent } from './events'
+import { isCharacterWeaponId, type GameEvent } from './events'
 import type { ProgressStateV1, WeaponProgress } from './types'
 
 const MAX_COUNTER = Number.MAX_SAFE_INTEGER
@@ -129,16 +129,33 @@ function completionTimestamp(dayKey: string): string {
   return `${date}T00:00:00.000Z`
 }
 
+function normalizeDistinctDailyEvidence(
+  daily: ProgressStateV1['daily']
+): void {
+  daily.distinctIds = sortedIds(daily.distinctIds.filter(isCharacterWeaponId))
+  daily.progress = Math.min(daily.distinctIds.length, daily.target)
+  const completionHasEvidence = (
+    daily.progress >= daily.target
+    && daily.completedAt !== null
+    && daily.stampAwarded
+  )
+  if (completionHasEvidence) return
+  daily.completedAt = null
+  daily.stampAwarded = false
+}
+
 function advanceDaily(
   state: ProgressStateV1,
   event: GameEvent,
   catalog: QuestCatalogSnapshot
 ): void {
   const daily = state.daily
-  if (daily.target === 0 || daily.completedAt !== null) return
+  if (daily.target === 0) return
 
   const definition = catalog.quests.find((quest) => quest.id === daily.questId)
   if (!definition) return
+  if (definition.distinct === 'weaponId') normalizeDistinctDailyEvidence(daily)
+  if (daily.completedAt !== null) return
   const normalizedEvent: GameEvent = event.type === 'CHARGE_RELEASED'
     ? { ...event, charge: clampCharge(event.charge) }
     : event
