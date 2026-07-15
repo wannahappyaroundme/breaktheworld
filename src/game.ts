@@ -22,11 +22,25 @@ import { WhatsNew } from './ui/whatsnew'
 import { shareCard } from './ui/sharecard'
 import { WeaponBar } from './weapons/bar'
 import { OneTimeHoldHint } from './ui/hold-hint'
-import { readStoredNumber, writeStoredNumber } from './storage'
+import {
+  GameplayProgressBridge,
+  GameProgressCoordinator,
+  KNOWN_MOVE_IDS,
+  KNOWN_WEAPON_IDS,
+  TargetDestroyAttribution,
+  createLazyStorageAdapter,
+  createMemoryFallbackHandler,
+  progressTargetId,
+} from './game-progress'
+import { BUILT_IN_CATALOG } from './progress/catalog'
+import { kstDayKey } from './progress/day'
+import type { EventSource, GameEvent } from './progress/events'
+import { ProgressStore, type CheckpointReason } from './progress/store'
+import { makeRecordBookView } from './progress/view-model'
+import { RecordBook } from './ui/recordbook'
+import type { RecordBookSettingChange, RecordBookSettingsState } from './ui/settings'
 
 const COMBO_RESET_SEC = 1.6
-const BEST_KEY = 'btw.bestCombo'
-const STATS_KEY = 'btw.totalTargets'
 const GRADES: { n: number; label: string }[] = [
   { n: 10, label: 'GREAT!' },
   { n: 20, label: 'SUPER!!' },
@@ -54,6 +68,10 @@ export class Game {
   private weapon: Weapon
   private hud: Hud
   private whatsNew: WhatsNew
+  private progress: GameProgressCoordinator
+  private progressBridge: GameplayProgressBridge
+  private recordBook: RecordBook
+  private motionQuery: MediaQueryList
   private bar: WeaponBar
   private combo = 0
   private comboTimer = 0
@@ -67,6 +85,7 @@ export class Game {
   private feverHue = 0
   private holdHint: OneTimeHoldHint
   private demoMode = false
+  private destroyAttribution = new TargetDestroyAttribution()
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.renderer = new Renderer(canvas)
@@ -86,29 +105,86 @@ export class Game {
       this.renderer.height
     )
 
-    this.best = readStoredNumber(BEST_KEY)
-    this.totalTargets = readStoredNumber(STATS_KEY)
-    this.weaponRoster = createWeaponRoster((characterId) => this.selectedCharacterSkin(characterId))
-    this.weapon = findWeapon(defaultWeaponId, this.weaponRoster)
-    this.controller = new ActionController({
-      getTarget: () => this.manager.current,
-      getTargetRunId: () => this.manager.targetRunId,
-      onDamage: (resolution) => {
-        this.addCombo()
-        if (!this.demoMode) this.holdHint.onDamage(resolution)
-      },
-    })
-    this.chargeVisual = new ChargeVisual(
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    )
     this.whatsNew = new WhatsNew(uiRoot)
     this.hud = new Hud(uiRoot, {
       onToggleSound: this.onToggleSound,
       onReset: this.onReset,
       onNext: this.onNext,
       onWhatsNew: () => this.whatsNew.open(),
+      onOpenRecordBook: this.onOpenRecordBook,
       onShare: this.onShare,
     })
+    const fallback = createMemoryFallbackHandler((notice) => this.hud.notify(notice))
+    this.progress = new GameProgressCoordinator({
+      store: new ProgressStore(createLazyStorageAdapter(), {
+        knownWeaponIds: KNOWN_WEAPON_IDS,
+        knownMoveIds: KNOWN_MOVE_IDS,
+        onMemoryFallback: fallback,
+      }),
+      catalog: BUILT_IN_CATALOG,
+      dayKey: kstDayKey(new Date()),
+      nowIso: () => new Date().toISOString(),
+      notify: (notice) => this.hud.notify(notice),
+      knownWeaponIds: KNOWN_WEAPON_IDS,
+      knownMoveIds: KNOWN_MOVE_IDS,
+    })
+    this.best = this.progress.state.lifetime.bestCombo
+    this.totalTargets = this.progress.state.lifetime.totalTargets
+    this.weaponRoster = createWeaponRoster((characterId) => this.selectedCharacterSkin(characterId))
+    this.weapon = findWeapon(defaultWeaponId, this.weaponRoster)
+    this.progressBridge = new GameplayProgressBridge({
+      dispatch: (events, reason) => this.dispatch(events, reason),
+      getSource: () => this.demoMode ? 'demo' : 'user',
+      onDamageFeedback: (resolution, source) => {
+        this.addCombo(source)
+        if (source === 'user') this.holdHint.onDamage(resolution)
+        return this.combo
+      },
+      onUserDestroyed: (targetRunId, golden) => {
+        this.destroyAttribution.record(targetRunId)
+        if (!golden) return null
+        for (let i = 0; i < 5; i++) this.addCombo('user')
+        return this.combo
+      },
+    })
+    this.controller = new ActionController({
+      getTarget: () => this.manager.current,
+      getTargetRunId: () => this.manager.targetRunId,
+      strongInput: this.progress.state.profile.strongInput,
+      onDamage: (resolution) => this.progressBridge.onDamage(resolution),
+      onDestroyed: (resolution) => this.progressBridge.onDestroyed(
+        resolution,
+        progressTargetId(this.manager.current.name),
+        this.manager.current.isGolden
+      ),
+      onSettled: (resolution) => this.progressBridge.onSettled(resolution),
+    })
+    this.motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+    this.chargeVisual = new ChargeVisual(this.effectiveReducedMotion())
+    this.recordBook = new RecordBook(
+      uiRoot,
+      makeRecordBookView(this.progress.state, this.progress.questCatalog),
+      this.settingsState(),
+      {
+        onTitleChange: (title) => {
+          if (this.progress.selectTitle(title)) this.refreshProgressUI()
+        },
+        onSkinChange: (characterId, skinId) => {
+          if (this.progress.selectSkin(characterId, skinId)) this.refreshProgressUI()
+        },
+        onSettingChange: (change) => this.changeSetting(change),
+        onClose: () => {
+          if (this.progress.markAchievementsSeen()) this.refreshProgressUI()
+        },
+      }
+    )
+    const onMotionPreferenceChange = () => this.applyMotionSetting()
+    if (typeof this.motionQuery.addEventListener === 'function') {
+      this.motionQuery.addEventListener('change', onMotionPreferenceChange)
+    } else {
+      this.motionQuery.addListener(onMotionPreferenceChange)
+    }
+    this.applyMotionSetting()
     this.hud.setBest(this.best)
     this.bar = new WeaponBar(uiRoot, this.weaponRoster, (w) => this.selectWeapon(w))
     this.bar.select(this.weapon.id)
@@ -119,6 +195,7 @@ export class Game {
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) this.controller.cancel('visibility')
     })
+    window.addEventListener('pagehide', () => this.progress.checkpoint('pagehide'))
     window.addEventListener('resize', () =>
       this.manager.current.reposition(this.renderer.width, this.renderer.height)
     )
@@ -127,7 +204,9 @@ export class Game {
 
     this.demoMode = location.search.includes('demo')
     if (this.demoMode) this.runDemo()
-    if (location.search.includes('fever')) window.setTimeout(() => this.enterFever(), 700)
+    if (location.search.includes('fever')) {
+      window.setTimeout(() => this.enterFever('system'), 700)
+    }
   }
 
   /** Auto-fire a weapon around the target (for screenshots/demos: ?demo or ?demo=thanos). */
@@ -158,9 +237,59 @@ export class Game {
     })
   }
 
-  /** Plan B replaces this default with the validated progress profile getter. */
-  private selectedCharacterSkin(_characterId: SkinnableCharacterId): CharacterSkinId {
-    return 'default'
+  private selectedCharacterSkin(characterId: SkinnableCharacterId): CharacterSkinId {
+    return this.progress.state.profile.skins[characterId] === 'classic' ? 'classic' : 'default'
+  }
+
+  /** The only gameplay entry that may reduce progress or emit gameplay analytics. */
+  private dispatch(events: readonly GameEvent[], reason?: CheckpointReason): void {
+    const previousTotal = this.progress.state.lifetime.totalTargets
+    const result = this.progress.dispatch(events, reason)
+    if (result.accepted === 0) return
+    this.refreshProgressUI()
+    if (
+      this.progress.state.lifetime.totalTargets > previousTotal
+      && MILESTONES.includes(this.progress.state.lifetime.totalTargets)
+    ) {
+      this.hud.toast(`🎉 ${this.progress.state.lifetime.totalTargets}번째 파괴 달성!`)
+    }
+  }
+
+  private settingsState(): RecordBookSettingsState {
+    const profile = this.progress.state.profile
+    return {
+      strongInput: profile.strongInput,
+      reducedMotion: profile.reducedMotion,
+      haptics: profile.haptics,
+    }
+  }
+
+  private refreshProgressUI(): void {
+    this.best = this.progress.state.lifetime.bestCombo
+    this.totalTargets = this.progress.state.lifetime.totalTargets
+    this.hud.setBest(this.best)
+    this.recordBook.render(
+      makeRecordBookView(this.progress.state, this.progress.questCatalog),
+      this.settingsState()
+    )
+  }
+
+  private changeSetting(change: RecordBookSettingChange): void {
+    const result = this.progress.dispatch([{ type: 'SETTING_CHANGED', ...change }], 'setting')
+    if (result.accepted === 0) return
+    if (change.key === 'strongInput') this.controller.setStrongInput(change.value)
+    if (change.key === 'reducedMotion') this.applyMotionSetting()
+    this.refreshProgressUI()
+  }
+
+  private effectiveReducedMotion(): boolean {
+    return this.progress.state.profile.reducedMotion || this.motionQuery.matches
+  }
+
+  private applyMotionSetting(): void {
+    const reduced = this.effectiveReducedMotion()
+    this.chargeVisual = new ChargeVisual(reduced)
+    document.documentElement.classList.toggle('reduce-motion', reduced)
   }
 
   private selectWeapon(w: Weapon): void {
@@ -192,10 +321,10 @@ export class Game {
   }
 
   private haptic(pattern: number | number[]): void {
-    if (navigator.vibrate) navigator.vibrate(pattern)
+    if (this.progress.state.profile.haptics && navigator.vibrate) navigator.vibrate(pattern)
   }
 
-  private addCombo(): void {
+  private addCombo(source: EventSource): void {
     this.combo++
     this.comboTimer = COMBO_RESET_SEC
     this.hud.setCombo(this.combo)
@@ -203,7 +332,7 @@ export class Game {
 
     // FEVER takes priority over a grade flash at the same combo (avoids overlap)
     if (FEVER_AT.includes(this.combo)) {
-      this.enterFever()
+      this.enterFever(source)
     } else {
       const grade = GRADES.find((g) => g.n === this.combo)
       if (grade) {
@@ -213,9 +342,8 @@ export class Game {
       }
     }
 
-    if (this.combo > this.best) {
+    if (source === 'user' && this.combo > this.best) {
       this.best = this.combo
-      writeStoredNumber(BEST_KEY, this.best)
       this.hud.setBest(this.best)
       if (!this.recordActive && this.combo >= 5) {
         this.recordActive = true
@@ -228,6 +356,7 @@ export class Game {
   }
 
   private handleSpawn(t: Target): void {
+    this.destroyAttribution.clear()
     this.audio.play('whoosh')
     this.spawnCount++
     // occasional golden bonus target (never the first)
@@ -238,12 +367,14 @@ export class Game {
   }
 
   private handleDestroyed(t: Target): void {
+    const targetRunId = this.manager.targetRunId
+    const attributedToUser = this.destroyAttribution.consume(targetRunId)
     this.controller.cancel('targetDestroyed')
-    this.celebrate(t)
+    this.celebrate(t, attributedToUser)
   }
 
   /** Enter (or refresh) the sustained FEVER mode at a combo peak. */
-  private enterFever(): void {
+  private enterFever(source: EventSource): void {
     const wasActive = this.feverActive
     this.feverActive = true
     this.feverTimer = FEVER_DUR
@@ -264,7 +395,10 @@ export class Game {
       colors: ['#ff4d9d', '#ffd23f', '#7fd0ff', '#7cc95a', '#b06bff'],
     })
     // first entry blows the current target apart as a payoff
-    if (!wasActive) this.manager.current.detachAll(cx, cy, 90, 'fall')
+    if (!wasActive) {
+      this.dispatch([{ type: 'FEVER_STARTED', source, combo: this.combo }])
+      this.manager.current.detachAll(cx, cy, 90, 'fall')
+    }
   }
 
   /** Rainbow border + tint while FEVER is active. */
@@ -287,7 +421,7 @@ export class Game {
   }
 
   /** Big satisfying flourish when a target is fully destroyed. */
-  private celebrate(t: Target): void {
+  private celebrate(t: Target, attributedToUser: boolean): void {
     const x = t.cx
     const y = t.cy
     glassBits(this.particles, x, y, 36)
@@ -302,7 +436,7 @@ export class Game {
     this.audio.play('bigboom')
     this.hud.popup(t.isGolden ? '💰 골든 잭팟! +5' : `${t.name} 와장창! 💥`)
 
-    if (t.isGolden) {
+    if (t.isGolden && attributedToUser) {
       this.camera.flash('#ffd23f', 0.4)
       this.haptic([50, 40, 50, 40, 90])
       this.particles.burst(x, y, 44, 'shard', {
@@ -313,14 +447,6 @@ export class Game {
         gravity: 900,
         drag: 0.4,
       })
-      for (let i = 0; i < 5; i++) this.addCombo()
-    }
-
-    // cumulative milestone (loss-aversion retention)
-    this.totalTargets++
-    writeStoredNumber(STATS_KEY, this.totalTargets)
-    if (MILESTONES.includes(this.totalTargets)) {
-      this.hud.toast(`🎉 ${this.totalTargets}번째 파괴 달성!`)
     }
   }
 
@@ -393,6 +519,7 @@ export class Game {
 
   private onReset = (): void => {
     this.controller.cancel('reset')
+    this.destroyAttribution.clear()
     this.manager.reset(this.renderer.width, this.renderer.height)
     this.combo = 0
     this.recordActive = false
@@ -403,15 +530,34 @@ export class Game {
 
   private onNext = (): void => {
     this.controller.cancel('next')
+    this.destroyAttribution.clear()
     this.manager.skip(this.renderer.width, this.renderer.height)
+  }
+
+  private onOpenRecordBook = (): void => {
+    this.refreshProgressUI()
+    this.recordBook.open()
   }
 
   private onShare = (): void => {
     this.audio.unlock()
     this.hud.toast('📸 카드 만드는 중…')
     void shareCard(
-      { best: this.best, total: this.totalTargets, url: location.href.split('?')[0] },
+      {
+        best: this.best,
+        total: this.totalTargets,
+        url: location.href.split('?')[0],
+        title: this.progress.state.profile.selectedTitle,
+        stampFrame: (
+          this.progress.state.lifetime.stamps > 0
+          || Object.keys(this.progress.state.achievements).length > 0
+        ),
+      },
       (m) => this.hud.toast(m)
-    )
+    ).then((result) => {
+      if (result.ok) this.dispatch([{ type: 'SHARE_COMPLETED', source: 'user' }])
+    }).catch(() => {
+      this.hud.toast('잠시 뒤 공유 버튼을 다시 눌러보세요.')
+    })
   }
 }

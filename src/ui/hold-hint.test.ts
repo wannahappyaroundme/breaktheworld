@@ -24,6 +24,7 @@ function damage(kind: ActionDamageResolution['kind'], detached: number): ActionD
     targetRunId: 1,
     weaponId: 'hammer',
     kind,
+    moveId: kind,
     charge: 0,
     damage: { detached, before: 20, remaining: 20 - detached, initial: 20, destroyed: false },
   }

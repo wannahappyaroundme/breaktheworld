@@ -249,6 +249,21 @@ body {
   }
 }
 
+html.reduce-motion *,
+html.reduce-motion *::before,
+html.reduce-motion *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+html.reduce-motion .weapon:active,
+html.reduce-motion .icon-btn:active,
+html.reduce-motion .whatsnew .ok-btn:active {
+  transform: none !important;
+}
+
 /* ===== current weapon label flash ===== */
 .weapon-flash {
   position: absolute;
@@ -684,6 +699,10 @@ body {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s ease;
+}
+
+.modal-backdrop[hidden] {
+  display: none;
 }
 .modal-backdrop.show {
   opacity: 1;

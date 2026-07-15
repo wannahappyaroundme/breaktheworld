@@ -396,6 +396,54 @@ describe('character runtime damage invariants', () => {
     expect(onDamage).toHaveBeenCalledTimes(1)
   })
 
+  it('reports a real character final destruction once with its actual move id', () => {
+    const world = makeWorld(40)
+    Object.defineProperty(world.target, 'attachedCount', { value: 8, configurable: true })
+    const applyDamage = vi.fn()
+      .mockReturnValueOnce({
+        detached: 3, before: 8, remaining: 5, initial: 40, destroyed: false,
+      } satisfies DamageResult)
+      .mockReturnValueOnce({
+        detached: 5, before: 5, remaining: 0, initial: 40, destroyed: true,
+      } satisfies DamageResult)
+    world.target.applyDamage = applyDamage
+    const calls: string[] = []
+    const onDamage = vi.fn((result) => calls.push(`damage:${result.moveId}`))
+    const onDestroyed = vi.fn((result) => calls.push(`destroyed:${result.moveId}`))
+    const onSettled = vi.fn((result) => calls.push(`settled:${result.moveId}`))
+    const controller = new ActionController({
+      getTarget: () => world.target,
+      getTargetRunId: () => 701,
+      nextSeed: () => 99,
+      now: () => 1_000,
+      onDamage,
+      onDestroyed,
+      onSettled,
+    })
+    const weapon = characterWeapons[0]
+
+    const resolution = controller.handle(
+      { type: 'press', id: 1, x: 190, y: 390 }, weapon, world
+    )
+    expect(resolution).toBeNull()
+    const settled = controller.handle(
+      { type: 'tap', id: 1, x: 190, y: 390 }, weapon, world
+    )
+    expect(CHARACTER_MOVE_IDS.cinnamoroll).toContain(settled?.moveId)
+    expect(calls).toEqual([`settled:${settled?.moveId}`])
+
+    settle(world)
+
+    expect(applyDamage).toHaveBeenCalledTimes(2)
+    expect(onDamage).toHaveBeenCalledTimes(1)
+    expect(onDestroyed).toHaveBeenCalledTimes(1)
+    expect(calls).toEqual([
+      `settled:${settled?.moveId}`,
+      `damage:${settled?.moveId}`,
+      `destroyed:${settled?.moveId}`,
+    ])
+  })
+
   it.each(['next', 'reset', 'visibility', 'weaponChange', 'targetDestroyed'] as const)(
     'does not report delayed character damage after %s cancellation',
     (reason) => {

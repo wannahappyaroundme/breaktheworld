@@ -103,6 +103,12 @@ export class RecordBook {
   }
 
   render(view: RecordBookView, settings: RecordBookSettingsState): void {
+    const active = this.doc.activeElement as HTMLElement | null
+    const focusKey = active && this.scroll.contains(active)
+      ? (['data-title', 'data-skin', 'data-setting'] as const)
+        .map((attribute) => ({ attribute, value: active.getAttribute(attribute) }))
+        .find(({ value }) => value !== null) ?? null
+      : null
     this.scroll.replaceChildren(
       this.renderDaily(view),
       this.renderAchievements(view),
@@ -110,6 +116,11 @@ export class RecordBook {
       this.renderStats(view),
       createSettingsSection(this.doc, settings, this.callbacks.onSettingChange)
     )
+    if (focusKey) {
+      const replacement = Array.from(this.scroll.querySelectorAll<HTMLElement>('button'))
+        .find((button) => button.getAttribute(focusKey.attribute) === focusKey.value)
+      replacement?.focus()
+    }
   }
 
   open(): void {

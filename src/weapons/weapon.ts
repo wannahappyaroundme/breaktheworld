@@ -28,6 +28,8 @@ export interface WeaponAction {
   y: number
   charge: number
   seed: number
+  /** Concrete catalog move selected by a weapon; point weapons use the action kind fallback. */
+  moveId?: string
   damage(request: Omit<DamageRequest, 'seed'>): DamageResult | null
 }
 

@@ -73,6 +73,7 @@ function executeQuick(
 ): void {
   const history = quickHistory.get(set.id) ?? []
   const move = pickQuickMove(set, action.seed, history.slice(-2))
+  action.moveId = move.id
   history.push(move.id)
   quickHistory.set(set.id, history.slice(-2))
   runCharacterMove(world, action, set, move, drawer)
@@ -91,7 +92,10 @@ function createCharacterWeapon(
     mode: 'cinematic',
     quick: (world, action) => executeQuick(world, action, set, drawer),
     drag: (world, action) => executeQuick(world, action, set, drawer),
-    charged: (world, action) => runCharacterMove(world, action, set, set.charged, drawer),
+    charged: (world, action) => {
+      action.moveId = set.charged.id
+      runCharacterMove(world, action, set, set.charged, drawer)
+    },
   }
 }
 

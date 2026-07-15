@@ -378,6 +378,36 @@ describe('RecordBook', () => {
     expect(haptics.querySelector('.recordbook-switch-state')?.textContent).toBe('켜짐')
   })
 
+  it('restores focus to the equivalent control after a live profile render', () => {
+    const parent = fakeDocument.createElement('div')
+    const recordBook = new RecordBook(
+      parent as unknown as HTMLElement,
+      view,
+      settings,
+      { onTitleChange: vi.fn(), onSkinChange: vi.fn(), onSettingChange: vi.fn() }
+    )
+    const previous = byAttribute(parent, 'data-skin', 'cinnamoroll:classic')
+    previous.focus()
+    const changedView: RecordBookView = {
+      ...view,
+      skins: {
+        ...view.skins,
+        items: view.skins.items.map((item) => ({
+          ...item,
+          choices: item.choices.map((choice) => ({
+            ...choice,
+            selected: choice.id === 'classic',
+          })),
+        })),
+      },
+    }
+
+    recordBook.render(changedView, settings)
+
+    expect(fakeDocument.activeElement).not.toBe(previous)
+    expect(fakeDocument.activeElement?.getAttribute('data-skin')).toBe('cinnamoroll:classic')
+  })
+
   it('traps focus and closes by Escape or backdrop while returning focus', () => {
     const parent = fakeDocument.createElement('div')
     const opener = fakeDocument.createElement('button')

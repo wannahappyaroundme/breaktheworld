@@ -95,6 +95,7 @@ function harness(strongInput: 'hold' | 'doubleTap' = 'hold') {
   let seed = 99
   const settled = vi.fn()
   const damaged = vi.fn()
+  const destroyed = vi.fn()
   const controller = new ActionController({
     getTarget: () => target,
     getTargetRunId: () => targetRunId,
@@ -103,12 +104,14 @@ function harness(strongInput: 'hold' | 'doubleTap' = 'hold') {
     strongInput,
     onSettled: settled,
     onDamage: damaged,
+    onDestroyed: destroyed,
   })
 
   return {
     controller,
     settled,
     damaged,
+    destroyed,
     get target() {
       return target
     },
@@ -212,8 +215,58 @@ describe('ActionController damage guard', () => {
     expect(h.damaged).toHaveBeenCalledWith(expect.objectContaining({
       weaponId: weapon.id,
       kind: 'quick',
+      moveId: 'quick',
       damage: expect.objectContaining({ detached: 5 }),
     }))
+    expect(h.destroyed).toHaveBeenCalledTimes(1)
+    expect(h.destroyed).toHaveBeenCalledWith(expect.objectContaining({
+      weaponId: weapon.id,
+      kind: 'quick',
+      moveId: 'quick',
+      damage: expect.objectContaining({ destroyed: true }),
+    }))
+  })
+
+  it('reports point damage, destruction, and settlement in logical order', () => {
+    const target = makeTarget()
+    const world = makeWorld(target)
+    const order: string[] = []
+    const controller = new ActionController({
+      getTarget: () => target,
+      getTargetRunId: () => 12,
+      now: () => 1_000,
+      onDamage: () => order.push('damage'),
+      onDestroyed: () => order.push('destroyed'),
+      onSettled: () => order.push('settled'),
+    })
+    const weapon = makeWeapon({
+      quick: (_world, action) => action.damage({ ...damageRequest(target), finish: true }),
+    })
+
+    controller.handle({ type: 'press', id: 1, x: 10, y: 20 }, weapon, world)
+    controller.handle({ type: 'tap', id: 1, x: 10, y: 20 }, weapon, world)
+
+    expect(order).toEqual(['damage', 'destroyed', 'settled'])
+  })
+
+  it('does not attribute a zero-detach terminal result to the active action', () => {
+    const h = harness()
+    const world = makeWorld(h.target)
+    vi.spyOn(h.target, 'applyDamage').mockReturnValue({
+      detached: 0,
+      before: 0,
+      remaining: 0,
+      initial: 20,
+      destroyed: true,
+    })
+    const weapon = makeWeapon({
+      quick: (_world, action) => action.damage(damageRequest(h.target)),
+    })
+
+    completeTap(h, weapon, world, 1, 10, 20)
+
+    expect(h.damaged).not.toHaveBeenCalled()
+    expect(h.destroyed).not.toHaveBeenCalled()
   })
 
   it.each<CancelReason>([

@@ -35,6 +35,7 @@ export interface ActionResolution {
   targetRunId: number
   weaponId: string
   kind: ActionKind
+  moveId: string
   charge: number
 }
 
@@ -59,6 +60,7 @@ export interface ActionControllerOptions {
   strongInput?: StrongInputMode
   onSettled?: (resolution: ActionResolution) => void
   onDamage?: (resolution: ActionDamageResolution) => void
+  onDestroyed?: (resolution: ActionDamageResolution) => void
 }
 
 export interface StartAction {
@@ -76,6 +78,7 @@ interface ActiveAction {
   settled: boolean
   kind: ActionKind
   damageReported: boolean
+  destroyReported: boolean
 }
 
 interface PendingTap {
@@ -112,6 +115,7 @@ export class ActionController {
   private nextSeed: () => number
   private onSettled?: (resolution: ActionResolution) => void
   private onDamage?: (resolution: ActionDamageResolution) => void
+  private onDestroyed?: (resolution: ActionDamageResolution) => void
 
   constructor(options: ActionControllerOptions) {
     this.getTarget = options.getTarget
@@ -121,6 +125,7 @@ export class ActionController {
     this.strongInput = options.strongInput === 'doubleTap' ? 'doubleTap' : 'hold'
     this.onSettled = options.onSettled
     this.onDamage = options.onDamage
+    this.onDestroyed = options.onDestroyed
   }
 
   get state(): ActionState {
@@ -477,6 +482,19 @@ export class ActionController {
             targetRunId: input.targetRunId,
             weaponId: input.weapon.id,
             kind: active.kind,
+            moveId: action.moveId ?? active.kind,
+            charge: action.charge,
+            damage: result,
+          })
+        }
+        if (result.destroyed && result.detached > 0 && !active.destroyReported) {
+          active.destroyReported = true
+          this.onDestroyed?.({
+            actionId,
+            targetRunId: input.targetRunId,
+            weaponId: input.weapon.id,
+            kind: active.kind,
+            moveId: action.moveId ?? active.kind,
             charge: action.charge,
             damage: result,
           })
@@ -491,6 +509,7 @@ export class ActionController {
       settled: false,
       kind: 'quick',
       damageReported: false,
+      destroyReported: false,
     }
     if (updateController) {
       this.active = active
@@ -554,6 +573,7 @@ export class ActionController {
       targetRunId: active.action.targetRunId,
       weaponId: active.weapon.id,
       kind,
+      moveId: active.action.moveId ?? kind,
       charge,
     }
     this.onSettled?.(resolution)
