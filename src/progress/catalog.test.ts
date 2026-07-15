@@ -1,0 +1,393 @@
+import { describe, expect, it, vi } from 'vitest'
+import { CHARACTER_IDS, isCharacterId } from '../weapons/character-ids'
+import { createCharacterWeapons } from '../weapons/characters'
+import { createDefaultProgress } from './defaults'
+import { isCharacterWeaponId, type GameEvent } from './events'
+import { kstDayKey } from './day'
+import {
+  ACHIEVEMENTS,
+  BUILT_IN_CATALOG,
+  BUILT_IN_QUESTS,
+  achievementProgress,
+  assignDailyQuest,
+  dailyNoticeTransitions,
+  resolveQuestCatalog,
+  unlockAchievements,
+  type QuestCatalogSnapshot,
+} from './catalog'
+import { parseProgress } from './validate'
+import { makeRecordBookView } from './view-model'
+import type { ProgressStateV1 } from './types'
+
+const charge = (source: 'user' | 'demo' | 'system', value: number): GameEvent => ({
+  type: 'CHARGE_RELEASED',
+  source,
+  actionId: 1,
+  targetRunId: 1,
+  weaponId: 'hammer',
+  charge: value,
+})
+
+const use = (source: 'user' | 'demo' | 'system', weaponId: string): GameEvent => ({
+  type: 'WEAPON_USED',
+  source,
+  actionId: 1,
+  targetRunId: 1,
+  weaponId,
+})
+
+const destroy = (source: 'user' | 'demo' | 'system'): GameEvent => ({
+  type: 'TARGET_DESTROYED',
+  source,
+  actionId: 1,
+  targetRunId: 1,
+  weaponId: 'hammer',
+  targetId: 'word',
+  golden: false,
+})
+
+function daily(
+  state: ProgressStateV1,
+  overrides: Partial<ProgressStateV1['daily']>
+): ProgressStateV1 {
+  return { ...state, daily: { ...state.daily, ...overrides } }
+}
+
+function assertPlainData(value: unknown): void {
+  if (value === null || typeof value !== 'object') return
+  const prototype = Object.getPrototypeOf(value)
+  expect(prototype === Object.prototype || prototype === Array.prototype).toBe(true)
+  for (const child of Object.values(value as Record<string, unknown>)) assertPlainData(child)
+}
+
+describe('KST 04:00 day key', () => {
+  it.each([
+    ['2026-07-15T18:59:59Z', '2026-07-15'],
+    ['2026-07-15T19:00:00Z', '2026-07-16'],
+    ['2026-01-31T18:59:59Z', '2026-01-31'],
+    ['2026-01-31T19:00:00Z', '2026-02-01'],
+    ['2026-12-31T18:59:59Z', '2026-12-31'],
+    ['2026-12-31T19:00:00Z', '2027-01-01'],
+  ])('maps %s to %s', (instant, expected) => {
+    expect(kstDayKey(new Date(instant))).toBe(expected)
+  })
+
+  it('is independent of input offset and host-local date getters', () => {
+    const localYear = vi.spyOn(Date.prototype, 'getFullYear').mockImplementation(() => {
+      throw new Error('host timezone getter used')
+    })
+    const instant = new Date('2026-07-15T14:59:59-04:00')
+
+    try {
+      expect(kstDayKey(instant)).toBe('2026-07-15')
+      expect(kstDayKey(instant)).toBe(kstDayKey(new Date('2026-07-15T18:59:59Z')))
+    } finally {
+      localYear.mockRestore()
+    }
+  })
+})
+
+describe('canonical character IDs', () => {
+  it('matches the actual ordered character weapon factory', () => {
+    expect(createCharacterWeapons().map((weapon) => weapon.id)).toEqual(CHARACTER_IDS)
+    expect(CHARACTER_IDS).toHaveLength(9)
+    for (const id of CHARACTER_IDS) {
+      expect(isCharacterId(id)).toBe(true)
+      expect(isCharacterWeaponId(id)).toBe(true)
+    }
+    expect(isCharacterId('hammer')).toBe(false)
+    expect(isCharacterWeaponId('hammer')).toBe(false)
+  })
+})
+
+describe('quest catalog', () => {
+  it('contains exactly the three approved quests in order', () => {
+    expect(BUILT_IN_QUESTS.map((quest) => ({
+      id: quest.id,
+      copy: quest.copy,
+      event: quest.event,
+      target: quest.target,
+      distinct: quest.distinct,
+    }))).toEqual([
+      {
+        id: 'charged_finisher_2',
+        copy: '꾹 와장창 2번',
+        event: 'CHARGE_RELEASED',
+        target: 2,
+        distinct: undefined,
+      },
+      {
+        id: 'characters_3',
+        copy: '캐릭터 3종 만나기',
+        event: 'WEAPON_USED',
+        target: 3,
+        distinct: 'weaponId',
+      },
+      {
+        id: 'targets_3',
+        copy: '타겟 3개 부수기',
+        event: 'TARGET_DESTROYED',
+        target: 3,
+        distinct: undefined,
+      },
+    ])
+    expect(BUILT_IN_CATALOG).toMatchObject({ version: 1, quests: BUILT_IN_QUESTS })
+  })
+
+  it('accepts only the approved user outcomes', () => {
+    const [chargedQuest, characterQuest, targetQuest] = BUILT_IN_QUESTS
+
+    expect(chargedQuest.accepts(charge('user', 1))).toBe(true)
+    expect(chargedQuest.accepts(charge('user', 0.999))).toBe(false)
+    expect(chargedQuest.accepts(charge('demo', 1))).toBe(false)
+    expect(characterQuest.accepts(use('user', 'cinnamoroll'))).toBe(true)
+    expect(characterQuest.accepts(use('user', 'hammer'))).toBe(false)
+    expect(characterQuest.accepts(use('system', 'ditto'))).toBe(false)
+    expect(targetQuest.accepts(destroy('user'))).toBe(true)
+    expect(targetQuest.accepts(destroy('demo'))).toBe(false)
+  })
+
+  it('uses the catalog target as the validation fallback for all three quests', () => {
+    for (const quest of BUILT_IN_QUESTS) {
+      const parsed = parseProgress({
+        installSeed: 'seed',
+        daily: {
+          dayKey: '2026-07-16',
+          questId: quest.id,
+          target: 0,
+          progress: 0,
+          distinctIds: [],
+          completedAt: null,
+          stampAwarded: false,
+        },
+      }, CHARACTER_IDS, [])
+      expect(parsed.daily.target).toBe(quest.target)
+    }
+  })
+
+  it('returns a typed remote catalog and falls back on absence or failure', async () => {
+    const remote: QuestCatalogSnapshot = {
+      version: 8,
+      quests: [BUILT_IN_QUESTS[2]],
+    }
+    await expect(resolveQuestCatalog({ loadCatalog: async () => remote })).resolves.toBe(remote)
+    await expect(resolveQuestCatalog({ loadCatalog: async () => null })).resolves.toBe(BUILT_IN_CATALOG)
+    await expect(resolveQuestCatalog({
+      loadCatalog: async () => { throw new Error('offline') },
+    })).resolves.toBe(BUILT_IN_CATALOG)
+    await expect(resolveQuestCatalog({
+      loadCatalog: async () => ({
+        version: 9,
+        quests: [{ ...BUILT_IN_QUESTS[0], target: 0 }],
+      }),
+    })).resolves.toBe(BUILT_IN_CATALOG)
+  })
+})
+
+describe('daily assignment and notices', () => {
+  it('keeps a stored same-day quest despite catalog reorder and version change', () => {
+    const state = daily(createDefaultProgress('install-a'), {
+      dayKey: '2026-07-16',
+      questId: 'targets_3',
+      target: 3,
+      progress: 2,
+      distinctIds: [],
+    })
+    const reordered: QuestCatalogSnapshot = {
+      version: 9,
+      quests: [...BUILT_IN_QUESTS].reverse(),
+    }
+
+    expect(assignDailyQuest(state, '2026-07-16', reordered)).toBe(state)
+  })
+
+  it('assigns a new day deterministically and clears every old daily field', () => {
+    const random = vi.spyOn(Math, 'random').mockImplementation(() => {
+      throw new Error('Math.random must not be used')
+    })
+    const previous = daily(createDefaultProgress('install-a'), {
+      dayKey: '2026-07-16',
+      questId: 'targets_3',
+      target: 3,
+      progress: 3,
+      distinctIds: ['old'],
+      completedAt: '2026-07-16T00:00:00.000Z',
+      stampAwarded: true,
+    })
+
+    try {
+      const first = assignDailyQuest(previous, '2026-07-17', BUILT_IN_CATALOG)
+      const again = assignDailyQuest(previous, '2026-07-17', BUILT_IN_CATALOG)
+      expect(again).toEqual(first)
+      expect(first).not.toBe(previous)
+      expect(first.catalogVersion).toBe(BUILT_IN_CATALOG.version)
+      expect(first.daily).toEqual({
+        dayKey: '2026-07-17',
+        questId: expect.any(String),
+        target: expect.any(Number),
+        progress: 0,
+        distinctIds: [],
+        completedAt: null,
+        stampAwarded: false,
+      })
+      expect(BUILT_IN_QUESTS.some((quest) => (
+        quest.id === first.daily.questId && quest.target === first.daily.target
+      ))).toBe(true)
+      expect(previous.daily.completedAt).not.toBeNull()
+    } finally {
+      random.mockRestore()
+    }
+  })
+
+  it('emits only first, first-half crossing, and completion transitions', () => {
+    const base = daily(createDefaultProgress('seed'), {
+      dayKey: '2026-07-16',
+      questId: 'targets_3',
+      target: 3,
+      progress: 0,
+    }).daily
+    const first = { ...base, progress: 1 }
+    const half = { ...base, progress: 2 }
+    const complete = {
+      ...base,
+      progress: 3,
+      completedAt: '2026-07-16T00:00:00.000Z',
+      stampAwarded: true,
+    }
+
+    expect(dailyNoticeTransitions(base, first)).toEqual(['first'])
+    expect(dailyNoticeTransitions(first, half)).toEqual(['half'])
+    expect(dailyNoticeTransitions(half, complete)).toEqual(['complete'])
+    expect(dailyNoticeTransitions(complete, complete)).toEqual([])
+    expect(dailyNoticeTransitions(half, half)).toEqual([])
+    expect(dailyNoticeTransitions({ ...half, dayKey: '2026-07-15' }, complete)).toEqual([])
+    expect(dailyNoticeTransitions(base, { ...base, target: 2, progress: 1 })).toEqual(['first', 'half'])
+    expect(dailyNoticeTransitions(
+      { ...complete, completedAt: null, stampAwarded: false },
+      complete
+    )).toEqual(['complete'])
+  })
+})
+
+describe('permanent achievements', () => {
+  it('contains exactly five approved names, targets, and conditions', () => {
+    expect(ACHIEVEMENTS.map(({ id, name, target, condition }) => ({
+      id,
+      name,
+      target,
+      condition,
+    }))).toEqual([
+      { id: 'first_destroy', name: '첫 와장창', target: 1, condition: 'totalTargets' },
+      { id: 'charge_master', name: '꾹 와장창 장인', target: 10, condition: 'chargedFinishers' },
+      { id: 'variety_10', name: '골고루 파괴', target: 10, condition: 'distinctWeapons' },
+      { id: 'world_cycle', name: '세상 한 바퀴', target: 3, condition: 'worldTargets' },
+      { id: 'combo_50', name: '콤보 폭주', target: 50, condition: 'bestCombo' },
+    ])
+  })
+
+  it('unlocks every satisfied achievement without adding daily stamps', () => {
+    const state = createDefaultProgress('seed')
+    state.lifetime.totalTargets = 1
+    state.lifetime.chargedFinishers = 10
+    state.lifetime.distinctWeaponIds = Array.from({ length: 10 }, (_, index) => `weapon-${index}`)
+    state.lifetime.bestCombo = 50
+    state.lifetime.stamps = 4
+    state.byTarget.word.destroys = 1
+    state.byTarget.earth.destroys = 1
+    state.byTarget.city.destroys = 1
+
+    expect(ACHIEVEMENTS.map((achievement) => achievementProgress(achievement, state))).toEqual([
+      1, 10, 10, 3, 50,
+    ])
+    const result = unlockAchievements(state, '2026-07-16T01:02:03.000Z')
+    expect(result.unlockedIds).toEqual(ACHIEVEMENTS.map((achievement) => achievement.id))
+    expect(Object.keys(result.state.achievements)).toEqual(result.unlockedIds)
+    expect(result.state.lifetime.stamps).toBe(4)
+    expect(state.achievements).toEqual({})
+  })
+})
+
+describe('record-book view model', () => {
+  it('returns stable ordered plain Korean display data without mutation or DOM values', () => {
+    const state = daily(createDefaultProgress('seed'), {
+      dayKey: '2026-07-16',
+      questId: 'targets_3',
+      target: 3,
+      progress: 1,
+    })
+    state.lifetime.bestCombo = 27
+    state.lifetime.totalTargets = 12
+    state.lifetime.chargedFinishers = 4
+    state.lifetime.distinctWeaponIds = ['fire', 'hammer']
+    state.achievements.first_destroy = {
+      unlockedAt: '2026-07-16T01:02:03.000Z',
+      seen: false,
+    }
+    state.profile.selectedTitle = '첫 와장창'
+    state.profile.skins = { cinnamoroll: 'classic', ditto: 'default' }
+    const before = JSON.stringify(state)
+
+    const view = makeRecordBookView(state, BUILT_IN_CATALOG)
+
+    expect(view.daily).toEqual({
+      heading: '오늘의 도전',
+      copy: '타겟 3개 부수기',
+      progress: 1,
+      target: 3,
+      progressText: '1 / 3',
+      complete: false,
+    })
+    expect(view.achievements.heading).toBe('부순 기록')
+    expect(view.achievements.items.map((item) => item.id)).toEqual(
+      ACHIEVEMENTS.map((achievement) => achievement.id)
+    )
+    expect(view.achievements.items[0]).toMatchObject({
+      name: '첫 와장창',
+      complete: true,
+      seen: false,
+      selectableTitle: '첫 와장창',
+    })
+    expect(view.achievements.items[1].selectableTitle).toBeNull()
+    expect(view.skins).toEqual({
+      heading: '캐릭터 모습',
+      items: [
+        {
+          id: 'cinnamoroll',
+          name: '시나모롤',
+          choices: [
+            { id: 'default', label: '기본', selected: false },
+            { id: 'classic', label: '클래식', selected: true },
+          ],
+        },
+        {
+          id: 'ditto',
+          name: '메타몽',
+          choices: [
+            { id: 'default', label: '기본', selected: true },
+            { id: 'classic', label: '클래식', selected: false },
+          ],
+        },
+      ],
+    })
+    expect(view.stats).toEqual({
+      heading: '내 기록',
+      items: [
+        { label: '최고 연속', value: '27' },
+        { label: '누적 파괴', value: '12' },
+        { label: '충전 강타', value: '4' },
+        { label: '사용한 무기', value: '2종' },
+      ],
+    })
+    expect(view.selectedTitle).toBe('첫 와장창')
+    expect(JSON.stringify(view)).not.toContain('—')
+    expect(JSON.stringify(state)).toBe(before)
+    expect(makeRecordBookView(state, BUILT_IN_CATALOG)).toEqual(view)
+    assertPlainData(view)
+
+    const lockedTitle = {
+      ...state,
+      profile: { ...state.profile, selectedTitle: '꾹 와장창 장인' },
+    }
+    expect(makeRecordBookView(lockedTitle, BUILT_IN_CATALOG).selectedTitle).toBeNull()
+  })
+})

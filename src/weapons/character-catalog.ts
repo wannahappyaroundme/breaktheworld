@@ -3,6 +3,9 @@ import type { Sfx } from '../engine/audio'
 import { Rng } from '../engine/rng'
 import type { AssetName } from '../art/assets'
 import { copyLastElementalPattern } from './pattern-memory'
+import type { CharacterId } from './character-ids'
+
+export type { CharacterId } from './character-ids'
 
 export const CHARACTER_MOVE_IDS = {
   cinnamoroll: ['cloudBounce', 'earSweep', 'skyPress'],
@@ -14,9 +17,8 @@ export const CHARACTER_MOVE_IDS = {
   cat: ['pawTaps', 'tailSweep', 'buttSlam'],
   ditto: ['blobPunch', 'stretchRoller', 'copySmash'],
   pooh: ['honeySplash', 'bellyPush', 'honeyBomb'],
-} as const
+} as const satisfies Record<CharacterId, readonly [string, string, string]>
 
-export type CharacterId = keyof typeof CHARACTER_MOVE_IDS
 export type CharacterMoveId = (typeof CHARACTER_MOVE_IDS)[CharacterId][number]
 
 export interface CharacterPatternContext {

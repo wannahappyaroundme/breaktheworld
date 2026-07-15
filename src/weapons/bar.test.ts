@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Weapon } from './weapon'
 import { WeaponBar } from './bar'
+import { CHARACTER_IDS, isCharacterId } from './character-ids'
+import { weapons } from './registry'
 
 class FakeClassList {
   private values = new Set<string>()
@@ -106,5 +108,25 @@ describe('WeaponBar accessibility', () => {
 
     weaponBar.select(weapon.id)
     expect(button.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('keeps all 21 buttons ordered and classifies the canonical 9 characters', () => {
+    vi.stubGlobal('document', {
+      createElement: (tag: string) => new FakeElement(tag),
+    })
+    vi.stubGlobal('window', {
+      matchMedia: () => ({ matches: false }),
+    })
+    const parent = new FakeElement('div')
+
+    new WeaponBar(parent as unknown as HTMLElement, weapons, vi.fn())
+
+    const buttons = parent.children[0].children
+    expect(buttons).toHaveLength(21)
+    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual(
+      weapons.map((candidate) => `${candidate.name} 선택`)
+    )
+    expect(weapons.filter((candidate) => isCharacterId(candidate.id)).map((candidate) => candidate.id))
+      .toEqual(CHARACTER_IDS)
   })
 })

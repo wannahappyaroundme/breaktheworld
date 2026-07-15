@@ -1,21 +1,9 @@
 import { isCharacterWeaponId } from './events'
 import { createDefaultProgress } from './defaults'
+import { ACHIEVEMENTS, findBuiltInQuest } from './catalog'
 import type { ProgressStateV1 } from './types'
 
-const QUEST_IDS = new Set(['charged_finisher_2', 'characters_3', 'targets_3'])
-const BUILT_IN_QUEST_TARGETS: Readonly<Record<string, number>> = {
-  charged_finisher_2: 2,
-  characters_3: 3,
-  targets_3: 3,
-}
-const ACHIEVEMENT_IDS = [
-  'first_destroy',
-  'charge_master',
-  'variety_10',
-  'world_cycle',
-  'combo_50',
-] as const
-const TITLES = new Set(['첫 와장창', '꾹 와장창 장인', '골고루 파괴', '세상 한 바퀴', '콤보 폭주'])
+const TITLES: ReadonlySet<string> = new Set(ACHIEVEMENTS.map((achievement) => achievement.name))
 const ISO_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-](\d{2}):(\d{2}))$/
 
 type UnknownRecord = Record<string, unknown>
@@ -122,7 +110,7 @@ function parseByTarget(state: ProgressStateV1, value: unknown): void {
 function parseAchievements(state: ProgressStateV1, value: unknown): void {
   const input = record(value)
   if (!input) return
-  for (const id of ACHIEVEMENT_IDS) {
+  for (const { id } of ACHIEVEMENTS) {
     const achievement = record(input[id])
     if (!achievement || !isIsoTimestamp(achievement.unlockedAt)) continue
     state.achievements[id] = {
@@ -138,7 +126,9 @@ function parseDaily(
   knownWeaponIds: ReadonlySet<string>
 ): void {
   const input = record(value)
-  if (!input || typeof input.questId !== 'string' || !QUEST_IDS.has(input.questId)) return
+  if (!input || typeof input.questId !== 'string') return
+  const quest = findBuiltInQuest(input.questId)
+  if (!quest) return
   if (!isDayKey(input.dayKey)) return
 
   state.daily.questId = input.questId
@@ -147,7 +137,7 @@ function parseDaily(
   const hasValidStoredTarget = storedTarget !== null && storedTarget > 0
   state.daily.target = hasValidStoredTarget
     ? storedTarget
-    : BUILT_IN_QUEST_TARGETS[input.questId]
+    : quest.target
 
   const storedProgress = counter(input.progress) ?? 0
   const validCompletedAt = isIsoTimestamp(input.completedAt) ? input.completedAt : null

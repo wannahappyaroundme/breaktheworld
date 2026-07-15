@@ -1,22 +1,11 @@
 import type { Weapon } from './weapon'
 import { getImage, type AssetName } from '../art/assets'
 import { weaponIconSVG } from '../art/weapon-icons'
-
-const CHAR_IDS = new Set<string>([
-  'cinnamoroll',
-  'thanos',
-  'ironman',
-  'hulk',
-  'godzilla',
-  'dragonball',
-  'cat',
-  'ditto',
-  'pooh',
-])
+import { isCharacterId } from './character-ids'
 
 /** Best available icon: character sprite > trusted doodle SVG > emoji. */
 function createIcon(w: Weapon): HTMLElement {
-  if (CHAR_IDS.has(w.id)) {
+  if (isCharacterId(w.id)) {
     const img = getImage(w.id as AssetName)
     if (img) {
       const icon = document.createElement('img')

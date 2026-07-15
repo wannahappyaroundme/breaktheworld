@@ -21,9 +21,9 @@ import {
 import {
   CHARACTER_MOVE_SETS,
   pickQuickMove,
-  type CharacterId,
   type CharacterMoveSet,
 } from './character-catalog'
+import { CHARACTER_IDS, type CharacterId } from './character-ids'
 import { runCharacterMove, type CharacterDrawer } from './character-runtime'
 
 function selectedAsset(set: CharacterMoveSet, getSelectedSkin: CharacterSkinGetter): AssetName {
@@ -95,22 +95,10 @@ function createCharacterWeapon(
   }
 }
 
-const CHARACTER_ORDER: readonly CharacterId[] = [
-  'cinnamoroll',
-  'thanos',
-  'ironman',
-  'hulk',
-  'godzilla',
-  'dragonball',
-  'cat',
-  'ditto',
-  'pooh',
-]
-
 export function createCharacterWeapons(
   getSelectedSkin: CharacterSkinGetter = () => 'default'
 ): Weapon[] {
-  return CHARACTER_ORDER.map((id) => createCharacterWeapon(CHARACTER_MOVE_SETS[id], getSelectedSkin))
+  return CHARACTER_IDS.map((id) => createCharacterWeapon(CHARACTER_MOVE_SETS[id], getSelectedSkin))
 }
 
 export const characterWeapons: Weapon[] = createCharacterWeapons()
