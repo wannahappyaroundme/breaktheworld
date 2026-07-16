@@ -6,7 +6,13 @@ export const PROGRESS_STORAGE_KEY = 'btw.progress.v1'
 const LEGACY_BEST_COMBO_KEY = 'btw.bestCombo'
 const LEGACY_TOTAL_TARGETS_KEY = 'btw.totalTargets'
 
-export type CheckpointReason = 'actionEnd' | 'targetDestroy' | 'unlock' | 'setting' | 'pagehide'
+export type CheckpointReason =
+  | 'actionEnd'
+  | 'targetDestroy'
+  | 'dailyRollover'
+  | 'unlock'
+  | 'setting'
+  | 'pagehide'
 export type ProgressStorageMode = 'persistent' | 'memory'
 
 export interface StorageAdapter {

@@ -102,6 +102,7 @@ export class Game {
   private destroyAttribution = new TargetDestroyAttribution()
   private remoteConfig = new RemoteConfigOrchestrator()
   private analytics = new GameAnalyticsBridge(false)
+  private questCatalogResolved = false
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
     this.renderer = new Renderer(canvas)
@@ -144,6 +145,7 @@ export class Game {
       analytics: this.analytics,
       knownWeaponIds: KNOWN_WEAPON_IDS,
       knownMoveIds: KNOWN_MOVE_IDS,
+      deferDailyAssignment: true,
     })
     this.best = this.progress.state.lifetime.bestCombo
     this.totalTargets = this.progress.state.lifetime.totalTargets
@@ -220,6 +222,9 @@ export class Game {
       if (document.hidden) {
         this.cancelAction('visibility')
         this.applyPendingRemoteConfig()
+      } else {
+        this.applyPendingRemoteConfig()
+        this.ensureCurrentDay()
       }
     })
     window.addEventListener('pagehide', () => {
@@ -249,6 +254,10 @@ export class Game {
       this.applyPendingRemoteConfig()
       return result.source
     } catch {
+      if (this.progress.setCatalog(BUILT_IN_CATALOG)) {
+        this.questCatalogResolved = true
+        this.ensureCurrentDay()
+      }
       return 'builtIn'
     }
   }
@@ -310,6 +319,9 @@ export class Game {
 
   /** The only gameplay entry that may reduce progress or emit gameplay analytics. */
   private dispatch(events: readonly GameEvent[], reason?: CheckpointReason): void {
+    if (events.some((event) => event.type === 'SETTING_CHANGED' || event.source === 'user')) {
+      this.ensureCurrentDay()
+    }
     const previousTotal = this.progress.state.lifetime.totalTargets
     const previousQuestCompletedAt = this.progress.state.daily.completedAt
     const result = this.reduceProgress(events, reason)
@@ -362,9 +374,20 @@ export class Game {
 
   private applyPendingRemoteConfig(): void {
     this.remoteConfig.applyIfSettled(this.controller.hasUnsettledAction, {
-      applyCatalog: (catalog) => { this.progress.setCatalog(catalog) },
+      applyCatalog: (catalog) => {
+        if (!this.progress.setCatalog(catalog)) return
+        this.questCatalogResolved = true
+        this.ensureCurrentDay()
+      },
       onFlagsApplied: (flags) => this.applyRemoteFlags(flags),
     })
+  }
+
+  private ensureCurrentDay(): boolean {
+    if (!this.questCatalogResolved) return false
+    const changed = this.progress.ensureDailyQuest(kstDayKey(new Date()))
+    if (changed) this.refreshProgressUI()
+    return changed
   }
 
   private gamificationFor(events: readonly GameEvent[]): boolean {

@@ -8,6 +8,7 @@ import {
 } from './progress/store'
 import type { ProgressStateV1 } from './progress/types'
 import { BUILT_IN_QUESTS, type QuestCatalogSnapshot } from './progress/catalog'
+import { kstDayKey } from './progress/day'
 import { CHARACTER_MOVE_IDS } from './weapons/character-catalog'
 import {
   ActionCheckpointBatcher,
@@ -52,6 +53,7 @@ function coordinator(options: {
   catalog?: QuestCatalogSnapshot
   notify?: ReturnType<typeof vi.fn>
   analytics?: ProgressAnalyticsSink
+  deferDailyAssignment?: boolean
 } = {}) {
   const store = new FakeStore(options.state ?? createDefaultProgress('seed'))
   const notify = options.notify ?? vi.fn()
@@ -62,6 +64,7 @@ function coordinator(options: {
     nowIso: () => '2026-07-17T03:00:00.000Z',
     notify,
     analytics: options.analytics,
+    deferDailyAssignment: options.deferDailyAssignment,
     knownWeaponIds: KNOWN_WEAPON_IDS,
     knownMoveIds: KNOWN_MOVE_IDS,
   })
@@ -253,6 +256,64 @@ describe('GameProgressCoordinator', () => {
     expect(progress.state.daily.progress).toBe(1)
   })
 
+  it('assigns a truly unassigned day once from the resolved remote catalog', () => {
+    const remoteCatalog: QuestCatalogSnapshot = {
+      version: 7,
+      quests: [{
+        ...targetsCatalog.quests[0],
+        id: 'remote_targets',
+        copy: '오늘은 타겟 7개 와장창',
+        target: 7,
+      }],
+    }
+    const { progress, store } = coordinator({ deferDailyAssignment: true })
+
+    expect(progress.state.daily.questId).toBe('')
+    expect(progress.setCatalog(remoteCatalog)).toBe(true)
+    expect(progress.ensureDailyQuest('2026-07-17')).toBe(true)
+    expect(progress.state.daily).toMatchObject({
+      dayKey: '2026-07-17', questId: 'remote_targets', target: 7,
+    })
+    expect(progress.ensureDailyQuest('2026-07-17')).toBe(false)
+    expect(store.saves.map((save) => save.reason)).toEqual(['dailyRollover'])
+  })
+
+  it('never replaces a persisted same-day assignment when remote data resolves', () => {
+    const state = createDefaultProgress('seed')
+    state.daily = {
+      dayKey: '2026-07-17', questId: 'targets_3', target: 3, progress: 2,
+      distinctIds: [], completedAt: null, stampAwarded: false,
+    }
+    const remoteCatalog: QuestCatalogSnapshot = {
+      version: 7,
+      quests: [{ ...targetsCatalog.quests[0], id: 'remote_targets', target: 7 }],
+    }
+    const { progress, store } = coordinator({ state, deferDailyAssignment: true })
+
+    expect(progress.setCatalog(remoteCatalog)).toBe(true)
+    expect(progress.ensureDailyQuest('2026-07-17')).toBe(false)
+    expect(progress.state.daily).toEqual(state.daily)
+    expect(store.saves).toHaveLength(0)
+  })
+
+  it('rolls an open session at the KST 04:00 boundary before the next event exactly once', () => {
+    const remoteCatalog: QuestCatalogSnapshot = {
+      version: 7,
+      quests: [{ ...targetsCatalog.quests[0], id: 'remote_targets', target: 7 }],
+    }
+    const { progress, store } = coordinator()
+    progress.setCatalog(remoteCatalog)
+
+    expect(progress.ensureDailyQuest(kstDayKey(new Date('2026-07-17T18:59:59Z')))).toBe(false)
+    expect(progress.ensureDailyQuest(kstDayKey(new Date('2026-07-17T19:00:00Z')))).toBe(true)
+    progress.dispatch([actionEvents(8, 4)[2]], 'targetDestroy')
+    expect(progress.state.daily).toMatchObject({
+      dayKey: '2026-07-18', questId: 'remote_targets', progress: 1,
+    })
+    expect(progress.ensureDailyQuest('2026-07-18')).toBe(false)
+    expect(store.saves.map((save) => save.reason)).toEqual(['dailyRollover', 'targetDestroy'])
+  })
+
   it.each(['constructor', 'toString', '__proto__', 'unknown'])(
     'rejects unknown skin character key %s without throwing',
     (characterId) => {
@@ -382,7 +443,8 @@ describe('GameplayProgressBridge', () => {
   })
 
   it('saves one settlement then one delayed golden impact, never a third checkpoint', () => {
-    const { progress, store } = coordinator()
+    const track = vi.fn()
+    const { progress, store } = coordinator({ analytics: { track } })
     const scheduled: Array<() => void> = []
     const bridge = new GameplayProgressBridge({
       dispatch: (events, reason) => progress.dispatch(events, reason),
@@ -395,12 +457,33 @@ describe('GameplayProgressBridge', () => {
     bridge.onSettled(settlement)
     bridge.onDamage(damage)
     bridge.onDestroyed(damage, 'word', true)
-    expect(store.saves.map((save) => save.reason)).toEqual(['actionEnd'])
+    expect(store.saves).toHaveLength(0)
     scheduled[0]()
 
-    expect(store.saves.map((save) => save.reason)).toEqual(['actionEnd', 'targetDestroy'])
+    expect(store.saves.map((save) => save.reason)).toEqual(['targetDestroy'])
     expect(progress.state.lifetime.bestCombo).toBe(14)
     expect(progress.state.lifetime.totalTargets).toBe(1)
+    expect(progress.state.byWeapon.cinnamoroll.uses).toBe(1)
+    expect(track.mock.calls.flatMap(([event]) => event.type).filter((type) => type === 'WEAPON_USED'))
+      .toHaveLength(1)
+  })
+
+  it('does not count a settled action that never produces checked positive damage', () => {
+    const track = vi.fn()
+    const { progress, store } = coordinator({ analytics: { track } })
+    const bridge = new GameplayProgressBridge({
+      dispatch: (events, reason) => progress.dispatch(events, reason),
+      getSource: () => 'user',
+      onDamageFeedback: () => 0,
+      onUserDestroyed: vi.fn(),
+    })
+
+    bridge.onSettled(settlement)
+
+    expect(progress.state.byWeapon.cinnamoroll).toBeUndefined()
+    expect(progress.state.lifetime.distinctWeaponIds).toEqual([])
+    expect(store.saves).toHaveLength(0)
+    expect(track).not.toHaveBeenCalled()
   })
 
   it('routes demo callbacks as non-progressing events through the real coordinator', () => {
@@ -421,17 +504,27 @@ describe('GameplayProgressBridge', () => {
     expect(store.saves).toHaveLength(0)
   })
 
-  it('emits partial charged settlement while leaving target mapping data-only', () => {
+  it('emits partial charge progress only after checked positive damage', () => {
     const dispatch = vi.fn()
+    const scheduled: Array<() => void> = []
     const bridge = new GameplayProgressBridge({
       dispatch,
       getSource: () => 'user',
       onDamageFeedback: () => 0,
       onUserDestroyed: vi.fn(),
+      schedule: (run) => scheduled.push(run),
     })
     bridge.onSettled({ ...settlement, kind: 'charged', charge: 0.6 })
+    expect(dispatch).not.toHaveBeenCalled()
+    bridge.onDamage({ ...damage, kind: 'charged', charge: 0.6 })
+    scheduled[0]()
 
     expect(dispatch.mock.calls[0][0]).toEqual([
+      {
+        type: 'ATTACK_RESOLVED', source: 'user', actionId: 21, targetRunId: 8,
+        weaponId: 'cinnamoroll', moveId: 'cloudBounce', detached: 5,
+      },
+      { type: 'COMBO_CHANGED', source: 'user', value: 0 },
       {
         type: 'WEAPON_USED', source: 'user', actionId: 21, targetRunId: 8,
         weaponId: 'cinnamoroll',
@@ -494,14 +587,13 @@ describe('ActionCheckpointBatcher', () => {
     batcher.recordImpact(identity, [attack, combo])
     batcher.recordDestroy(identity, destroyed)
 
-    expect(dispatch).toHaveBeenCalledTimes(1)
-    expect(dispatch).toHaveBeenNthCalledWith(1, [used], 'actionEnd')
+    expect(dispatch).not.toHaveBeenCalled()
     expect(scheduled).toHaveLength(1)
     scheduled[0]()
-    expect(dispatch).toHaveBeenCalledTimes(2)
+    expect(dispatch).toHaveBeenCalledTimes(1)
     expect(dispatch).toHaveBeenNthCalledWith(
-      2,
-      [attack, combo, destroyed],
+      1,
+      [attack, combo, destroyed, used],
       'targetDestroy'
     )
   })
@@ -530,8 +622,8 @@ describe('ActionCheckpointBatcher', () => {
     batcher.recordSettlement(identity, [used])
     expect(() => batcher.recordImpact(identity, [attack])).not.toThrow()
 
-    expect(dispatch).toHaveBeenCalledTimes(2)
-    expect(dispatch).toHaveBeenNthCalledWith(2, [attack], 'actionEnd')
+    expect(dispatch).toHaveBeenCalledTimes(1)
+    expect(dispatch).toHaveBeenNthCalledWith(1, [attack, used], 'actionEnd')
   })
 })
 

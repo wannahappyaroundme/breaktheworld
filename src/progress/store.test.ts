@@ -675,6 +675,7 @@ describe('ProgressStore checkpoints', () => {
   it.each<CheckpointReason>([
     'actionEnd',
     'targetDestroy',
+    'dailyRollover',
     'unlock',
     'setting',
     'pagehide',

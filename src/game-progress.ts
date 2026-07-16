@@ -57,6 +57,7 @@ export interface GameProgressCoordinatorOptions {
   analytics?: ProgressAnalyticsSink
   knownWeaponIds?: readonly string[]
   knownMoveIds?: readonly string[]
+  deferDailyAssignment?: boolean
 }
 
 export interface ProgressDispatchResult {
@@ -98,6 +99,7 @@ function isValidCount(value: number): boolean {
 export class GameProgressCoordinator {
   private readonly store: ProgressPersistence
   private catalog: QuestCatalogSnapshot
+  private assignmentCatalog: QuestCatalogSnapshot
   private readonly nowIso: () => string
   private readonly notify: (notice: NotificationInput) => unknown
   private readonly analytics?: ProgressAnalyticsSink
@@ -110,16 +112,19 @@ export class GameProgressCoordinator {
   constructor(options: GameProgressCoordinatorOptions) {
     this.store = options.store
     this.catalog = options.catalog
+    this.assignmentCatalog = options.catalog
     this.nowIso = options.nowIso
     this.notify = options.notify
     this.analytics = options.analytics
     this.knownWeaponIds = new Set(options.knownWeaponIds ?? KNOWN_WEAPON_IDS)
     this.knownMoveIds = new Set(options.knownMoveIds ?? KNOWN_MOVE_IDS)
-    this.state = assignDailyQuest(
-      this.store.load().state,
-      options.dayKey,
-      options.catalog
+    const loaded = this.store.load().state
+    const hasSameDayAssignment = (
+      loaded.daily.dayKey === options.dayKey && loaded.daily.questId !== ''
     )
+    this.state = options.deferDailyAssignment && !hasSameDayAssignment
+      ? loaded
+      : assignDailyQuest(loaded, options.dayKey, options.catalog)
   }
 
   get questCatalog(): QuestCatalogSnapshot {
@@ -151,10 +156,21 @@ export class GameProgressCoordinator {
     }
     const assigned = this.catalog.quests.find((quest) => quest.id === this.state.daily.questId)
     const includesAssigned = normalized.some((quest) => quest.id === this.state.daily.questId)
+    this.assignmentCatalog = { version: catalog.version, quests: normalized }
     this.catalog = assigned && !includesAssigned
       ? { version: catalog.version, quests: [...normalized, assigned] }
-      : { version: catalog.version, quests: normalized }
+      : this.assignmentCatalog
     this.state = { ...this.state, catalogVersion: catalog.version }
+    return true
+  }
+
+  /** Assigns the current play day once from the latest resolved catalog and checkpoints it. */
+  ensureDailyQuest(dayKey: string): boolean {
+    const next = assignDailyQuest(this.state, dayKey, this.assignmentCatalog)
+    if (next === this.state) return false
+    this.state = next
+    this.catalog = this.assignmentCatalog
+    this.store.save(this.state, 'dailyRollover')
     return true
   }
 
@@ -355,6 +371,7 @@ export interface ActionIdentity {
 
 interface ActionBatch {
   impact: GameEvent[]
+  settlement: GameEvent[]
   settled: boolean
   destroyed: boolean
   impactScheduled: boolean
@@ -379,12 +396,8 @@ export class ActionCheckpointBatcher {
 
   recordImpact(identity: ActionIdentity, events: readonly GameEvent[]): void {
     const batch = this.batch(identity)
-    if (batch.settled) {
-      batch.impact.push(...events)
-      this.scheduleImpact(identity, batch)
-      return
-    }
     batch.impact.push(...events)
+    if (batch.settled && this.hasPositiveImpact(batch)) this.scheduleImpact(identity, batch)
   }
 
   recordDestroy(identity: ActionIdentity, event: GameEvent): void {
@@ -392,26 +405,30 @@ export class ActionCheckpointBatcher {
     if (batch.destroyed) return
     batch.destroyed = true
     batch.impact.push(event)
-    if (batch.settled) this.scheduleImpact(identity, batch)
+    if (batch.settled && this.hasPositiveImpact(batch)) this.scheduleImpact(identity, batch)
   }
 
   recordSettlement(identity: ActionIdentity, events: readonly GameEvent[]): void {
     const batch = this.batch(identity)
     if (batch.settled) return
     batch.settled = true
-    if (batch.impact.length > 0) {
-      this.dispatch([...batch.impact, ...events], batch.destroyed ? 'targetDestroy' : 'actionEnd')
-      batch.impact.length = 0
-      return
-    }
-    this.dispatch([...events], 'actionEnd')
+    batch.settlement.push(...events)
+    if (!this.hasPositiveImpact(batch)) return
+    this.dispatch(
+      [...batch.impact, ...batch.settlement],
+      batch.destroyed ? 'targetDestroy' : 'actionEnd'
+    )
+    batch.impact.length = 0
+    batch.settlement.length = 0
   }
 
   private batch(identity: ActionIdentity): ActionBatch {
     const key = `${identity.actionId}:${identity.targetRunId}`
     const existing = this.batches.get(key)
     if (existing) return existing
-    const created = { impact: [], settled: false, destroyed: false, impactScheduled: false }
+    const created = {
+      impact: [], settlement: [], settled: false, destroyed: false, impactScheduled: false,
+    }
     this.batches.set(key, created)
     this.order.push(key)
     if (this.order.length > RECENT_EVENT_LIMIT) {
@@ -426,9 +443,10 @@ export class ActionCheckpointBatcher {
     batch.impactScheduled = true
     const flush = () => {
       batch.impactScheduled = false
-      if (batch.impact.length === 0) return
-      const events = [...batch.impact]
+      if (!this.hasPositiveImpact(batch)) return
+      const events = [...batch.impact, ...batch.settlement]
       batch.impact.length = 0
+      batch.settlement.length = 0
       this.dispatch(events, batch.destroyed ? 'targetDestroy' : 'actionEnd')
       void identity
     }
@@ -437,6 +455,14 @@ export class ActionCheckpointBatcher {
     } catch {
       flush()
     }
+  }
+
+  private hasPositiveImpact(batch: ActionBatch): boolean {
+    return batch.impact.some((event) => (
+      event.type === 'ATTACK_RESOLVED'
+      && Number.isFinite(event.detached)
+      && event.detached > 0
+    ))
   }
 }
 
