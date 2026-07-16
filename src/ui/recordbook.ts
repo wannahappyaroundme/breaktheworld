@@ -1,4 +1,6 @@
 import type { RecordBookView } from '../progress/view-model'
+import { profileAvatar } from '../player/avatar'
+import type { ProfileCardView } from '../player/types'
 import {
   createSettingsSection,
   type RecordBookSettingChange,
@@ -12,8 +14,11 @@ export interface RecordBookCallbacks {
     skinId: 'default' | 'classic'
   ) => void
   onSettingChange: (change: RecordBookSettingChange) => void
+  onOpenProfile?: (trigger: HTMLButtonElement) => void
   onClose?: () => void
 }
+
+const HIDDEN_PROFILE: ProfileCardView = { visible: false, kind: 'hidden' }
 
 let recordBookId = 0
 
@@ -51,7 +56,8 @@ export class RecordBook {
     parent: HTMLElement,
     view: RecordBookView,
     settings: RecordBookSettingsState,
-    private readonly callbacks: RecordBookCallbacks
+    private readonly callbacks: RecordBookCallbacks,
+    profile: ProfileCardView = HIDDEN_PROFILE,
   ) {
     this.doc = parent.ownerDocument ?? document
     const headingId = `recordbook-heading-${++recordBookId}`
@@ -95,21 +101,27 @@ export class RecordBook {
     }
     this.sheet.addEventListener('click', (event) => event.stopPropagation())
 
-    this.render(view, settings)
+    this.render(view, settings, profile)
   }
 
   get isOpen(): boolean {
     return this.openState
   }
 
-  render(view: RecordBookView, settings: RecordBookSettingsState): void {
+  render(
+    view: RecordBookView,
+    settings: RecordBookSettingsState,
+    profile: ProfileCardView = HIDDEN_PROFILE,
+  ): void {
     const active = this.doc.activeElement as HTMLElement | null
     const focusKey = active && this.scroll.contains(active)
-      ? (['data-title', 'data-skin', 'data-setting'] as const)
+      ? (['data-recordbook-profile', 'data-title', 'data-skin', 'data-setting'] as const)
         .map((attribute) => ({ attribute, value: active.getAttribute(attribute) }))
         .find(({ value }) => value !== null) ?? null
       : null
+    const profileCard = this.renderProfile(profile)
     this.scroll.replaceChildren(
+      ...(profileCard ? [profileCard] : []),
       this.renderDaily(view),
       this.renderAchievements(view),
       this.renderSkins(view),
@@ -121,6 +133,44 @@ export class RecordBook {
         .find((button) => button.getAttribute(focusKey.attribute) === focusKey.value)
       replacement?.focus()
     }
+  }
+
+  private renderProfile(profile: ProfileCardView): HTMLButtonElement | null {
+    if (!profile.visible) return null
+    const button = this.doc.createElement('button')
+    button.type = 'button'
+    button.className = `recordbook-profile ${profile.kind}`
+    button.setAttribute('data-recordbook-profile', profile.kind)
+    button.setAttribute('aria-label', '프로필 열기')
+
+    const avatar = textElement(this.doc, 'span', 'G', 'recordbook-profile-avatar')
+    avatar.setAttribute('aria-hidden', 'true')
+    const copy = this.doc.createElement('span')
+    copy.className = 'recordbook-profile-copy'
+
+    if (profile.kind === 'guest') {
+      copy.append(
+        textElement(this.doc, 'strong', profile.title),
+        textElement(this.doc, 'span', profile.detail),
+      )
+    } else {
+      const model = profileAvatar(profile.userId, profile.displayName)
+      avatar.textContent = model.initial
+      avatar.setAttribute('style', `background-color:${model.color}`)
+      const detail = {
+        saved: '기록이 저장됐어요',
+        saving: '기록을 저장하는 중이에요',
+        offline: '연결되면 기록을 저장해요',
+        retry: '기록 저장을 다시 확인해 주세요',
+      }[profile.sync]
+      copy.append(
+        textElement(this.doc, 'strong', profile.displayName),
+        textElement(this.doc, 'span', detail),
+      )
+    }
+    button.append(avatar, copy, textElement(this.doc, 'span', '›', 'recordbook-profile-arrow'))
+    button.addEventListener('click', () => this.callbacks.onOpenProfile?.(button))
+    return button
   }
 
   setGamificationVisible(visible: boolean): void {

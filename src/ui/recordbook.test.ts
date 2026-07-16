@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RecordBookView } from '../progress/view-model'
+import type { ProfileCardView } from '../player/types'
 import { Hud } from './hud'
 import type { NotificationScheduler } from './notification-queue'
 import { RecordBook } from './recordbook'
@@ -302,6 +303,13 @@ const settings: RecordBookSettingsState = {
   haptics: true,
 }
 
+const guestProfile: ProfileCardView = {
+  visible: true,
+  kind: 'guest',
+  title: '게스트로 즐기는 중',
+  detail: '로그인하면 이 기기와 다른 기기에서 기록을 이어갈 수 있어요',
+}
+
 let fakeDocument: FakeDocument
 
 beforeEach(() => {
@@ -320,6 +328,61 @@ function byAttribute(root: FakeElement, name: string, value: string): FakeElemen
 }
 
 describe('RecordBook', () => {
+  it('renders the profile button first and forwards one open action', () => {
+    const parent = fakeDocument.createElement('div')
+    const onOpenProfile = vi.fn()
+    const recordBook = new RecordBook(
+      parent as unknown as HTMLElement,
+      view,
+      settings,
+      {
+        onTitleChange: vi.fn(), onSkinChange: vi.fn(), onSettingChange: vi.fn(),
+        onOpenProfile,
+      },
+      guestProfile,
+    )
+    const scroll = parent.querySelector('.recordbook-scroll')!
+    const profile = byAttribute(parent, 'data-recordbook-profile', 'guest')
+
+    expect(scroll.children[0]).toBe(profile)
+    expect(profile.tagName).toBe('BUTTON')
+    expect(profile.getAttribute('aria-label')).toBe('프로필 열기')
+    expect(profile.textContent).toContain('게스트로 즐기는 중')
+    profile.click()
+    expect(onOpenProfile).toHaveBeenCalledOnce()
+    expect(onOpenProfile).toHaveBeenCalledWith(profile)
+
+    recordBook.render(view, settings, { visible: false, kind: 'hidden' })
+    expect(parent.querySelector('[data-recordbook-profile]')).toBeNull()
+  })
+
+  it('shows player save status and restores profile-card focus after a render', () => {
+    const parent = fakeDocument.createElement('div')
+    const profile: ProfileCardView = {
+      visible: true,
+      kind: 'player',
+      displayName: '예진',
+      userId: '10000000-0000-4000-8000-000000000001',
+      sync: 'saving',
+      lastSavedAt: null,
+    }
+    const recordBook = new RecordBook(
+      parent as unknown as HTMLElement,
+      view,
+      settings,
+      { onTitleChange: vi.fn(), onSkinChange: vi.fn(), onSettingChange: vi.fn() },
+      profile,
+    )
+    const previous = byAttribute(parent, 'data-recordbook-profile', 'player')
+    previous.focus()
+
+    recordBook.render(view, settings, { ...profile, sync: 'saved' })
+
+    expect(fakeDocument.activeElement).not.toBe(previous)
+    expect(fakeDocument.activeElement?.getAttribute('data-recordbook-profile')).toBe('player')
+    expect(fakeDocument.activeElement?.textContent).toContain('기록이 저장됐어요')
+  })
+
   it('renders the exact four data sections before settings with text-only remote copy', () => {
     const parent = fakeDocument.createElement('div')
     const recordBook = new RecordBook(

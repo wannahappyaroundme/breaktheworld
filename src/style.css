@@ -478,6 +478,62 @@ html.reduce-motion .whatsnew .ok-btn:active {
   padding: 8px 14px max(20px, env(safe-area-inset-bottom));
 }
 
+.recordbook-profile {
+  width: 100%;
+  min-height: 68px;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 11px;
+  margin: 6px 0 4px;
+  padding: 10px 12px;
+  border: 1.5px solid rgba(255, 210, 63, 0.45);
+  border-radius: 17px;
+  background: linear-gradient(135deg, #242e52, #1a2240);
+  color: #fff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recordbook-profile-avatar {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 50%;
+  background: #465272;
+  color: #fff;
+  font-size: 19px;
+  font-weight: 900;
+}
+
+.recordbook-profile-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.recordbook-profile-copy strong {
+  overflow: hidden;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recordbook-profile-copy span {
+  color: #cbd3e9;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.recordbook-profile-arrow {
+  color: #fff4bd;
+  font-size: 26px;
+  text-align: right;
+}
+
 .recordbook-section {
   padding: 14px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
@@ -638,6 +694,7 @@ html.reduce-motion .whatsnew .ok-btn:active {
 }
 
 .recordbook-close:focus-visible,
+.recordbook-profile:focus-visible,
 .recordbook-choice:focus-visible,
 .recordbook-title-choice:focus-visible,
 .recordbook-switch:focus-visible {
