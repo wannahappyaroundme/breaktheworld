@@ -27,6 +27,7 @@ export interface PlayerProfileViewOptions {
 interface InertState {
   element: HTMLElement
   inert: boolean
+  inertAttribute: string | null
   ariaHidden: string | null
 }
 
@@ -575,10 +576,12 @@ export class PlayerProfileView {
       .map((child) => ({
         element: child,
         inert: child.inert,
+        inertAttribute: child.getAttribute('inert'),
         ariaHidden: child.getAttribute('aria-hidden'),
       }))
     for (const state of this.inertStates) {
       state.element.inert = true
+      state.element.setAttribute('inert', '')
       state.element.setAttribute('aria-hidden', 'true')
     }
   }
@@ -586,6 +589,8 @@ export class PlayerProfileView {
   private restoreSiblings(): void {
     for (const state of this.inertStates) {
       state.element.inert = state.inert
+      if (state.inertAttribute === null) state.element.removeAttribute('inert')
+      else state.element.setAttribute('inert', state.inertAttribute)
       if (state.ariaHidden === null) state.element.removeAttribute('aria-hidden')
       else state.element.setAttribute('aria-hidden', state.ariaHidden)
     }
