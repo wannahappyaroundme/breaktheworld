@@ -17,10 +17,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL || '' }}
-      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY || '' }}
-      VITE_PLAYER_DELETION_CONTACT: ${{ vars.VITE_PLAYER_DELETION_CONTACT || '' }}
-      VITE_PLAYER_PROCESSING_NOTICE: ${{ vars.VITE_PLAYER_PROCESSING_NOTICE || '' }}
+      VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || '' }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY || '' }}
+      VITE_PLAYER_DELETION_CONTACT: ${{ secrets.VITE_PLAYER_DELETION_CONTACT || '' }}
+      VITE_PLAYER_PROCESSING_NOTICE: ${{ secrets.VITE_PLAYER_PROCESSING_NOTICE || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
