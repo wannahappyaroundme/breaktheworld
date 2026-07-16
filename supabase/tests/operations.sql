@@ -39,9 +39,13 @@ select is(
   'all feature flags default closed'
 );
 select is(
-  (select count(*) from public.feature_flags),
+  (
+    select count(*)
+    from public.feature_flags
+    where key in ('gamification_enabled', 'character_variants_enabled', 'analytics_enabled')
+  ),
   3::bigint,
-  'all three feature flags are seeded'
+  'all three operations feature flags are seeded'
 );
 select is(
   (select count(*) from public.quest_catalog where enabled),
@@ -238,7 +242,15 @@ values
 
 set local role anon;
 select is((select count(*) from public.quest_catalog), 1::bigint, 'anon sees only enabled and current quests');
-select is((select count(*) from public.feature_flags), 3::bigint, 'anon sees all feature flags');
+select is(
+  (
+    select count(*)
+    from public.feature_flags
+    where key in ('gamification_enabled', 'character_variants_enabled', 'analytics_enabled')
+  ),
+  3::bigint,
+  'anon sees all operations feature flags'
+);
 select throws_ok(
   $$insert into public.quest_catalog (id, copy, event_type, target) values ('anon_write', '익명 쓰기', 'TARGET_DESTROYED', 1)$$,
   '42501',

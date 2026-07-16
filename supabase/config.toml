@@ -282,9 +282,9 @@ max_frequency = "5s"
 # uri = "pg-functions://postgres/auth/before-user-created-hook"
 
 # This hook runs before a token is issued and allows you to add additional claims based on the authentication method used.
-# [auth.hook.custom_access_token]
-# enabled = true
-# uri = "pg-functions://<database>/<schema>/<hook_name>"
+[auth.hook.custom_access_token]
+enabled = true
+uri = "pg-functions://postgres/public/player_access_token_hook"
 
 # Configure one of the supported SMS providers: `twilio`, `twilio_verify`, `messagebird`, `textlocal`, `vonage`.
 [auth.sms.twilio]
@@ -387,6 +387,12 @@ deno_version = 2
 verify_jwt = false
 
 [functions.manage-admin]
+verify_jwt = true
+
+[functions.player-auth]
+verify_jwt = false
+
+[functions.manage-player]
 verify_jwt = true
 
 # [edge_runtime.secrets]
