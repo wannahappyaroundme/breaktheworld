@@ -7,7 +7,7 @@
 - Production: `https://wannahappyaroundme.github.io/breaktheworld/`
 - Admin: `https://wannahappyaroundme.github.io/breaktheworld/admin.html`
 - Backend: Supabase project `breaktheworld`, ref `ohvkunouhcxbnfjhhuih`, Seoul region.
-- Release state: gamification, character variants, analytics, guest-first player profiles, cross-device sync, and operator player management are merged and deployed.
+- Release state: gamification, character variants, analytics, first-entry guest/profile choice, cross-device profile sync, and operator player management are merged and deployed.
 - All 6 production feature flags are enabled. One active owner exists; credentials are never documented.
 - Next product gate: future My Page, achievement titles, and achievement avatar rewards require a new approved design and plan before code.
 
@@ -24,6 +24,7 @@ Personal, non-commercial, mobile-first stress-relief web game. Target users want
 - Combo/best combo, FEVER, golden targets, haptics, share card, what's-new modal, PWA.
 - Versioned `btw.progress.v1`, legacy migration, one daily quest, 5 permanent stamps, record-book sheet, queued notifications.
 - Guest-first profiles: globally unique 2-12 Hangul/ASCII/digit ID, ASCII case-insensitive comparison, explicit duplicate check, exact 6-digit numeric PIN.
+- An undecided device must choose create/login/guest before play. Exact local marker `btw.profileEntry.v1=guest` skips later prompts; valid sessions and forced PIN change outrank it, and logout clears it.
 - New profiles start at zero. Guest progress stays device-local and is never imported.
 - Persistent login, logout, multi-device operation sync, offline outbox, and server projection.
 - Supabase admin auth, quest CRUD/scheduling, feature flags, enum-only analytics, and static/local fallbacks.
@@ -90,6 +91,7 @@ dist/                       generated build; never hand-edit
 ### Local
 
 - `btw.progress.v1`: schema/catalog version, install seed, counters, weapon/target history, achievements, daily quest, selected title/skins, input/motion/haptics settings.
+- `btw.profileEntry.v1`: optional exact `guest` marker only. Storage failure falls back to the current tab and never blocks play.
 - Guest state is device-local. Authenticated operations enter an offline outbox and retry without blocking play.
 
 ### Supabase
@@ -125,6 +127,7 @@ RLS centrally checks `admin_users`. The browser receives only the Supabase URL a
 
 - Mobile portrait first; target remains visually dominant.
 - `📖 기록책` is the single top entry for progress, profile, skins, and settings.
+- Required first-entry profile choice precedes What's New and reuses the existing profile dialog; normal record-book profile behavior is unchanged.
 - Minimum interactive target 44px, semantic buttons, Korean accessible names, visible focus.
 - Full-screen effects are reserved for FEVER, records, and max-charge signatures.
 - Rendered Korean uses easy words and positive next actions. No em dash. Copy lint enforces forbidden terms and punctuation.
@@ -132,11 +135,11 @@ RLS centrally checks `admin_users`. The browser receives only the Supabase URL a
 
 ## Release Evidence
 
-- GitHub Actions production run `29509957681` deployed commit `b23e11a` from `main` on 2026-07-17 KST.
-- CI passed copy lint, 685 Vitest tests across 47 files, TypeScript check, production build, and `npm audit --omit=dev --audit-level=high` with 0 vulnerabilities.
+- GitHub Actions production run `29519482311` deployed commit `60d9abd` from `main` on 2026-07-17 KST.
+- CI passed copy lint, 706 Vitest tests across 48 files, TypeScript check, production build, and `npm audit --omit=dev --audit-level=high` with 0 vulnerabilities.
 - Local pgTAP suite passed 234 tests before backend deploy. Remote DB lint reported 0 errors.
-- Production game, admin HTML, game/admin/Supabase bundles returned HTTP 200. Initial sampled responses were 0.25-0.31s.
-- Production browser confirmed game, record book, guest profile card, unique-ID check, profile-create form, and admin login form. Game/admin browser logs were empty.
+- Production game, admin HTML, game/admin/Supabase bundles returned HTTP 200. Latest sampled responses were 0.03-0.27s.
+- Production browser at 390x844 confirmed checking -> required create/login/guest choice before What's New, 44px actions, no overflow, and no warning/error logs. Local production-config preview confirmed guest choice -> What's New -> prompt-free reload and unchanged normal record-book profile behavior.
 - Supabase production verification: 4 migrations, 5 active functions, 6 enabled flags, active owner, duplicate-check endpoint response, and no observed 5xx.
 
 Required future release gates: fresh tests/build/audit, migration and flag diff, preview signoff, real iOS Safari and Android Chrome smoke, production approval, live URL checks, and post-deploy observation.
@@ -147,6 +150,7 @@ Required future release gates: fresh tests/build/audit, migration and flag diff,
 - 2026-06 to 2026-07: 21 weapons/characters, feedback effects, records, golden target, FEVER, and share card.
 - 2026-07-16: gamification, character variety, progress, operator dashboard, analytics, and player profile/sync designs approved and implemented.
 - 2026-07-17: Supabase operations/auth/sync backend and GitHub Pages frontend deployed to production; all release flags enabled.
+- 2026-07-17: first-entry guest/profile choice, same-device guest memory, logout re-choice, and deferred What's New deployed without backend changes.
 
 ## Documentation Rule
 
