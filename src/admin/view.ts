@@ -12,6 +12,7 @@ import {
   type QuestEventType,
 } from './api'
 import { isCharacterId, type CharacterId } from '../weapons/character-ids'
+import type { ManagedPlayer } from '../player/admin-contract'
 
 type MetricFormat = 'number' | 'percent'
 
@@ -38,6 +39,9 @@ const CHARACTER_DISPLAY_NAMES: Readonly<Record<CharacterId, string>> = {
   ditto: '메타몽',
   pooh: '푸',
 }
+
+const PLAYER_SECTION_TITLE = '플레이어 프로필'
+const PLAYER_SECTION_COPY = '게임 기록을 저장하는 프로필과 로그인 상태를 관리해요.'
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag)
@@ -111,6 +115,18 @@ function localDateTime(value: string | null): string {
   if (!Number.isFinite(date.getTime())) return ''
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
   return local.toISOString().slice(0, 16)
+}
+
+function formatPlayerDate(value: string, includeTime = false): string {
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return '-'
+  return new Intl.DateTimeFormat('ko-KR', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    ...(includeTime ? { hour: 'numeric', minute: '2-digit' } : {}),
+    timeZone: 'Asia/Seoul',
+  }).format(date)
 }
 
 function setBusy(button: HTMLButtonElement, busy: boolean): void {
@@ -229,18 +245,22 @@ export class AdminView {
     if (!this.session) return
     this.root.className = 'admin-shell'
     this.renderLoading('저장된 운영 내용을 모으고 있어요.')
-    const [quests, flags, metrics, admins] = await Promise.all([
+    const [quests, flags, metrics, admins, players] = await Promise.all([
       this.api.listQuests(),
       this.api.listFlags(),
       this.api.loadDailyMetrics(),
       canManageAccounts(this.session.role)
         ? this.api.listAdmins()
         : Promise.resolve({ ok: true, data: [] } as ApiResult<ManagedAdmin[]>),
+      canManageAccounts(this.session.role)
+        ? this.api.listPlayers()
+        : Promise.resolve({ ok: true, data: [] } as ApiResult<ManagedPlayer[]>),
     ])
     const questState = dashboardSectionState(quests)
     const flagState = dashboardSectionState(flags)
     const metricState = dashboardSectionState(metrics)
     const adminState = dashboardSectionState(admins)
+    const playerState = dashboardSectionState(players)
 
     const layout = element('div', 'admin-dashboard')
     this.root.className = 'admin-shell'
@@ -282,6 +302,12 @@ export class AdminView {
       metricState.status === 'ready'
         ? this.renderMetricSection(metricState.data)
         : this.renderSectionError('사용 통계', '개인을 알아볼 수 없는 게임 사용 흐름만 보여줘요.', metricState),
+      playerState.status === 'ready'
+        ? this.renderPlayerSection(playerState.data)
+        : this.renderSectionError(PLAYER_SECTION_TITLE, PLAYER_SECTION_COPY, {
+            ...playerState,
+            message: '플레이어 목록을 다시 불러와 주세요.',
+          }),
       adminState.status === 'ready'
         ? this.renderAdminSection(adminState.data)
         : this.renderSectionError('운영자 계정', '운영 도구를 사용할 계정 상태를 확인해요.', adminState),
@@ -490,6 +516,207 @@ export class AdminView {
     return section
   }
 
+  private renderPlayerSection(players: ManagedPlayer[]): HTMLElement {
+    const { section, body } = this.section(PLAYER_SECTION_TITLE, PLAYER_SECTION_COPY)
+    section.className += ' admin-card--wide'
+    if (!this.session) return section
+    if (!canManageAccounts(this.session.role)) {
+      body.append(text('p', '전체 운영자가 플레이어 프로필을 관리해요. 도전과 기능 설정은 지금 바로 바꿀 수 있어요.', 'admin-empty'))
+      return section
+    }
+    if (players.length === 0) {
+      body.append(text('p', '플레이어가 프로필을 만들면 이곳에서 확인할 수 있어요.', 'admin-empty'))
+      return section
+    }
+
+    const list = element('ul', 'admin-player-list')
+    for (const player of players) {
+      const item = element('li', 'admin-player-item')
+      item.dataset.userId = player.userId
+
+      const identity = element('div', 'admin-player-identity')
+      const status = text('span', player.status === 'active' ? '사용 중' : '잠시 멈춤', 'admin-player-status')
+      status.className += player.status === 'active' ? ' admin-player-status--active' : ' admin-player-status--inactive'
+      identity.append(text('strong', player.displayName), status)
+
+      const meta = element('dl', 'admin-player-meta')
+      const fields: Array<[string, string]> = [
+        ['만든 날', formatPlayerDate(player.createdAt)],
+        ['마지막 저장', player.lastSyncAt ? formatPlayerDate(player.lastSyncAt, true) : '아직 저장된 기록이 없어요'],
+        ['PIN 상태', player.forcePinChange ? '임시 PIN, 다음 로그인 때 변경' : '사용자 PIN'],
+      ]
+      for (const [label, value] of fields) {
+        const field = element('div')
+        field.append(text('dt', label), text('dd', value))
+        meta.append(field)
+      }
+
+      const actions = element('div', 'admin-player-actions')
+      const reset = actionButton(player.status === 'active' ? 'PIN 재설정' : 'PIN 재설정하고 다시 사용', 'primary')
+      reset.dataset.focusKey = `player-reset:${player.displayName}`
+      reset.addEventListener('click', () => this.openPlayerPinDialog(player, reset))
+      actions.append(reset)
+
+      if (player.status === 'active') {
+        const deactivate = actionButton('잠시 멈추기')
+        deactivate.dataset.focusKey = `player-deactivate:${player.displayName}`
+        deactivate.addEventListener('click', () => this.openConfirmation({
+          title: `${player.displayName} 프로필의 새 로그인을 잠시 멈출까요?`,
+          copy: '이미 로그인한 기기는 다음 확인 때 로그아웃되고, 저장된 기록은 그대로 남아요.',
+          confirmLabel: '잠시 멈추기',
+          trigger: deactivate,
+          action: () => this.api.deactivatePlayer(player.userId),
+          success: '이 프로필의 새 로그인을 잠시 멈췄어요.',
+          focusKey: `player-reset:${player.displayName}`,
+        }))
+        actions.append(deactivate)
+      }
+
+      const remove = actionButton('삭제', 'danger')
+      remove.dataset.focusKey = `player-delete:${player.displayName}`
+      remove.addEventListener('click', () => this.openPlayerDeleteDialog(player, remove))
+      actions.append(remove)
+
+      item.append(identity, meta, actions)
+      list.append(item)
+    }
+    body.append(list)
+    return section
+  }
+
+  private openPlayerPinDialog(player: ManagedPlayer, trigger: HTMLButtonElement): void {
+    const dialog = element('dialog', 'admin-dialog admin-dialog--confirm')
+    dialog.setAttribute('aria-labelledby', 'player-pin-dialog-title')
+    const form = element('form', 'admin-dialog__panel')
+    form.noValidate = true
+    const title = text('h2', '임시 PIN 재설정')
+    title.id = 'player-pin-dialog-title'
+    const lead = text(
+      'p',
+      player.status === 'inactive'
+        ? `${player.displayName} 프로필은 새 PIN을 저장하면 다시 사용할 수 있어요.`
+        : `${player.displayName} 프로필은 모든 기기에서 다시 로그인하게 돼요.`,
+      'admin-lead',
+    )
+    const pin = this.labelledInput('임시 PIN 숫자 6자리', 'temporaryPin', 'password', true)
+    const confirmation = this.labelledInput('임시 PIN 한 번 더', 'temporaryPinConfirmation', 'password', true)
+    for (const input of [pin.input, confirmation.input]) {
+      input.inputMode = 'numeric'
+      input.pattern = '[0-9]{6}'
+      input.minLength = 6
+      input.maxLength = 6
+      input.autocomplete = 'new-password'
+    }
+    const reveal = actionButton('PIN 보이기')
+    reveal.setAttribute('aria-pressed', 'false')
+    reveal.addEventListener('click', () => {
+      const visible = pin.input.type === 'text'
+      pin.input.type = visible ? 'password' : 'text'
+      confirmation.input.type = visible ? 'password' : 'text'
+      reveal.textContent = visible ? 'PIN 보이기' : 'PIN 가리기'
+      reveal.setAttribute('aria-pressed', String(!visible))
+    })
+    const status = text('p', '', 'admin-form-status')
+    status.setAttribute('role', 'alert')
+    status.hidden = true
+    const actions = element('div', 'admin-dialog__actions')
+    const cancel = actionButton('돌아가기')
+    const save = actionButton(player.status === 'active' ? '임시 PIN 저장' : '임시 PIN 저장하고 다시 사용', 'primary')
+    save.type = 'submit'
+    cancel.addEventListener('click', () => dialog.close())
+    actions.append(cancel, save)
+    form.append(title, lead, pin.wrap, confirmation.wrap, reveal, status, actions)
+    form.addEventListener('submit', (event) => {
+      event.preventDefault()
+      if (save.disabled) return
+      status.hidden = true
+      if (!/^\d{6}$/.test(pin.input.value) || !/^\d{6}$/.test(confirmation.input.value)) {
+        status.textContent = 'PIN은 숫자 6자리로 입력해 주세요.'
+        status.hidden = false
+        ;(!/^\d{6}$/.test(pin.input.value) ? pin.input : confirmation.input).focus()
+        return
+      }
+      if (pin.input.value !== confirmation.input.value) {
+        status.textContent = 'PIN을 같은 숫자 6자리로 다시 입력해 주세요.'
+        status.hidden = false
+        confirmation.input.focus()
+        return
+      }
+      setBusy(save, true)
+      void this.api.resetPlayerPin(player.userId, pin.input.value, confirmation.input.value).then(async (result) => {
+        if (!result.ok) {
+          status.textContent = result.error.message
+          status.hidden = false
+          setBusy(save, false)
+          return
+        }
+        dialog.close()
+        this.restoreFocusKey = `player-reset:${player.displayName}`
+        this.successMessage = '임시 PIN으로 바꿨어요. 모든 기기에서 다시 로그인해 주세요.'
+        await this.renderDashboard()
+      })
+    })
+    dialog.append(form)
+    this.mountDialog(dialog, trigger)
+    pin.input.focus()
+  }
+
+  private openPlayerDeleteDialog(player: ManagedPlayer, trigger: HTMLButtonElement): void {
+    const dialog = element('dialog', 'admin-dialog admin-dialog--confirm')
+    dialog.setAttribute('aria-labelledby', 'player-delete-dialog-title')
+    const form = element('form', 'admin-dialog__panel')
+    form.noValidate = true
+    const title = text('h2', `${player.displayName} 프로필을 삭제할까요?`)
+    title.id = 'player-delete-dialog-title'
+    const confirmation = this.labelledInput(
+      `프로필 ID를 똑같이 입력해 주세요: ${player.displayName}`,
+      'profileConfirmation',
+      'text',
+      true,
+    )
+    confirmation.input.autocomplete = 'off'
+    confirmation.input.spellcheck = false
+    const status = text('p', '', 'admin-form-status')
+    status.setAttribute('role', 'alert')
+    status.hidden = true
+    const actions = element('div', 'admin-dialog__actions')
+    const cancel = actionButton('돌아가기')
+    const confirm = actionButton('프로필 삭제', 'danger')
+    confirm.type = 'submit'
+    confirm.disabled = true
+    confirmation.input.addEventListener('input', () => {
+      confirm.disabled = confirmation.input.value !== player.displayName
+    })
+    cancel.addEventListener('click', () => dialog.close())
+    actions.append(cancel, confirm)
+    form.append(
+      title,
+      text('p', '프로필과 저장된 기록을 모두 삭제해요. 삭제한 기록은 다시 불러올 수 없어요.', 'admin-lead'),
+      confirmation.wrap,
+      status,
+      actions,
+    )
+    form.addEventListener('submit', (event) => {
+      event.preventDefault()
+      if (confirm.disabled || confirmation.input.value !== player.displayName) return
+      setBusy(confirm, true)
+      void this.api.deletePlayer(player.userId, player.displayName, confirmation.input.value).then(async (result) => {
+        if (!result.ok) {
+          status.textContent = result.error.message
+          status.hidden = false
+          setBusy(confirm, false)
+          return
+        }
+        dialog.close()
+        this.successMessage = '프로필과 저장된 기록을 삭제했어요.'
+        await this.renderDashboard()
+      })
+    })
+    dialog.append(form)
+    this.mountDialog(dialog, trigger)
+    confirmation.input.focus()
+  }
+
   private openQuestDialog(quest: AdminQuest | null, trigger: HTMLButtonElement): void {
     const dialog = element('dialog', 'admin-dialog')
     dialog.setAttribute('aria-labelledby', 'quest-dialog-title')
@@ -581,6 +808,7 @@ export class AdminView {
     const confirm = actionButton(options.confirmLabel, 'danger')
     cancel.addEventListener('click', () => dialog.close())
     confirm.addEventListener('click', () => {
+      if (confirm.disabled) return
       setBusy(confirm, true)
       void options.action().then(async (result) => {
         if (!result.ok) {
