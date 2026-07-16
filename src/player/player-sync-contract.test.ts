@@ -1,0 +1,262 @@
+import { describe, expect, it } from 'vitest'
+import { ACHIEVEMENTS } from '../progress/catalog'
+import { createDefaultProgress } from '../progress/defaults'
+import type { ProgressStateV1 } from '../progress/types'
+import {
+  PLAYER_SYNC_ACHIEVEMENTS,
+  applyPendingPlayerOperation,
+  applyPlayerOperation,
+  diffPlayerProgress,
+  parseSyncBatch,
+  type AcceptedPlayerProgressOperationV1,
+  type PlayerProgressOperationV1,
+  type SyncProgressState,
+} from '../../supabase/functions/_shared/player-sync-contract'
+
+const OPERATION_ID = '11111111-1111-4111-8111-111111111111'
+const DEVICE_ID = '22222222-2222-4222-8222-222222222222'
+const NOW = '2026-07-16T12:00:00.000Z'
+
+function zero(seed = '33333333-3333-4333-8333-333333333333'): SyncProgressState {
+  return createDefaultProgress(seed)
+}
+
+function operation(
+  delta: Partial<PlayerProgressOperationV1['delta']> = {},
+  overrides: Partial<PlayerProgressOperationV1> = {}
+): PlayerProgressOperationV1 {
+  return {
+    operationId: OPERATION_ID,
+    operationVersion: 1,
+    deviceId: DEVICE_ID,
+    clientSeq: 1,
+    createdAt: NOW,
+    playDayKey: '2026-07-16',
+    dailyQuest: null,
+    delta: {
+      validHits: 0,
+      chargedFinishers: 0,
+      totalTargets: 0,
+      bestCombo: 0,
+      addDistinctWeaponIds: [],
+      byWeapon: {},
+      byTarget: { word: 0, earth: 0, city: 0 },
+      achievements: {},
+      settings: {},
+      ...delta,
+    },
+    ...overrides,
+  }
+}
+
+function accepted(
+  delta: Partial<PlayerProgressOperationV1['delta']> = {},
+  overrides: Partial<AcceptedPlayerProgressOperationV1> = {}
+): AcceptedPlayerProgressOperationV1 {
+  return {
+    ...operation(delta, overrides),
+    acceptedOrder: 1,
+    acceptedAt: NOW,
+    ...overrides,
+  }
+}
+
+function assignedDaily(event: 'CHARGE_RELEASED' | 'WEAPON_USED' | 'TARGET_DESTROYED') {
+  return {
+    dayKey: '2026-07-16',
+    questId: event === 'WEAPON_USED' ? 'characters_3' : 'targets_3',
+    quest: {
+      copy: event === 'WEAPON_USED' ? '캐릭터 3종 만나기' : '타겟 3개 부수기',
+      event,
+      distinct: event === 'WEAPON_USED' ? 'weaponId' as const : null,
+    },
+    target: 3,
+    progress: 0,
+    distinctIds: [],
+    completedAt: null,
+    stampAwarded: false,
+  }
+}
+
+describe('player sync contract', () => {
+  it('parses exact operation keys and bounded batches', () => {
+    const parsed = parseSyncBatch([operation({ validHits: 1 })])
+    expect(parsed).toHaveLength(1)
+    expect(parsed[0].delta.validHits).toBe(1)
+
+    expect(() => parseSyncBatch([{ ...operation(), extra: true }])).toThrow('invalid_sync_batch')
+    expect(() => parseSyncBatch([operation({}, { operationId: 'not-a-uuid' })])).toThrow('invalid_sync_batch')
+    expect(() => parseSyncBatch([operation({}, { clientSeq: 0 })])).toThrow('invalid_sync_batch')
+    expect(() => parseSyncBatch([operation({ validHits: -1 })])).toThrow('invalid_sync_batch')
+    expect(() => parseSyncBatch([operation({ totalTargets: 1001 })])).toThrow('invalid_sync_batch')
+    expect(() => parseSyncBatch(Array.from({ length: 101 }, (_, index) => operation({}, {
+      operationId: `${String(index + 1).padStart(8, '0')}-1111-4111-8111-111111111111`,
+      clientSeq: index + 1,
+    })))).toThrow('invalid_sync_batch')
+  })
+
+  it('rejects unknown catalog IDs and oversized operation content', () => {
+    expect(() => parseSyncBatch([operation({ addDistinctWeaponIds: ['unknown'] })])).toThrow()
+    expect(() => parseSyncBatch([operation({
+      byWeapon: { hammer: { uses: 1, finishes: 0, addSeenMoves: ['unknown'] } },
+    })])).toThrow()
+    expect(() => parseSyncBatch([operation({
+      achievements: { unknown: { unlockedAt: NOW, seen: false } },
+    })])).toThrow()
+    expect(() => parseSyncBatch([operation({
+      settings: { unknown: true } as never,
+    })])).toThrow()
+    expect(() => parseSyncBatch([operation({}, {
+      dailyQuest: {
+        id: 'targets_3',
+        copy: `타${'겟'.repeat(33_000)}`,
+        event: 'TARGET_DESTROYED',
+        distinct: null,
+        target: 3,
+      },
+    })])).toThrow()
+  })
+
+  it('diffs monotonic progress without uploading seed or derived stamps', () => {
+    const previous = zero('guest-seed-never-uploaded')
+    const next: ProgressStateV1 = structuredClone(previous)
+    next.installSeed = 'player-local-seed'
+    next.lifetime.validHits = 2
+    next.lifetime.stamps = 9
+    next.lifetime.distinctWeaponIds = ['hammer']
+    next.byWeapon.hammer = { uses: 1, finishes: 0, seenMoves: ['tap'] }
+    next.byTarget.word.destroys = 1
+    next.profile.reducedMotion = true
+
+    const draft = diffPlayerProgress(previous, next, { nowIso: NOW })
+    expect(draft).toEqual(expect.objectContaining({
+      createdAt: NOW,
+      delta: expect.objectContaining({
+        validHits: 2,
+        addDistinctWeaponIds: ['hammer'],
+        settings: { reducedMotion: true },
+      }),
+    }))
+    expect(JSON.stringify(draft)).not.toContain('guest-seed-never-uploaded')
+    expect(JSON.stringify(draft)).not.toContain('player-local-seed')
+    expect(JSON.stringify(draft)).not.toContain('"stamps"')
+    expect(diffPlayerProgress(next, structuredClone(next), { nowIso: NOW })).toBeNull()
+  })
+
+  it('rejects counter decreases instead of emitting negative corrections', () => {
+    const previous = zero()
+    previous.lifetime.validHits = 2
+    const next = structuredClone(previous)
+    next.lifetime.validHits = 1
+    expect(() => diffPlayerProgress(previous, next, { nowIso: NOW })).toThrow('progress_decreased')
+  })
+
+  it('sums counters, maximizes best combo, unions sets, and isolates settings', () => {
+    const left = accepted({
+      validHits: 2,
+      bestCombo: 8,
+      addDistinctWeaponIds: ['hammer'],
+      settings: { reducedMotion: true },
+    })
+    const right = accepted({
+      validHits: 3,
+      bestCombo: 5,
+      addDistinctWeaponIds: ['cat'],
+      settings: { haptics: false },
+    }, {
+      operationId: '44444444-4444-4444-8444-444444444444',
+      acceptedOrder: 2,
+    })
+    const merged = [right, left]
+      .sort((a, b) => a.acceptedOrder - b.acceptedOrder)
+      .reduce((state, item) => applyPlayerOperation(state, item), zero())
+
+    expect(merged.lifetime.validHits).toBe(5)
+    expect(merged.lifetime.bestCombo).toBe(8)
+    expect(merged.lifetime.distinctWeaponIds).toEqual(['cat', 'hammer'])
+    expect(merged.profile.reducedMotion).toBe(true)
+    expect(merged.profile.haptics).toBe(false)
+  })
+
+  it('keeps earliest achievement unlock and monotonic seen state', () => {
+    const later = accepted({
+      achievements: { first_destroy: { unlockedAt: '2026-07-16T12:00:00.000Z', seen: false } },
+    })
+    const earlierSeen = accepted({
+      achievements: { first_destroy: { unlockedAt: '2026-07-15T12:00:00.000Z', seen: true } },
+    }, { operationId: '55555555-5555-4555-8555-555555555555', acceptedOrder: 2 })
+    const state = applyPlayerOperation(applyPlayerOperation(zero(), later), earlierSeen)
+    expect(state.achievements.first_destroy).toEqual({
+      unlockedAt: '2026-07-15T12:00:00.000Z',
+      seen: true,
+    })
+  })
+
+  it('uses only the explicit server assignment for daily evidence and completes once', () => {
+    const clientLie = {
+      id: 'characters_3',
+      copy: '캐릭터 3종 만나기',
+      event: 'WEAPON_USED' as const,
+      distinct: 'weaponId' as const,
+      target: 1,
+    }
+    const op = accepted({ byTarget: { word: 1, earth: 1, city: 1 } }, { dailyQuest: clientLie })
+    const once = applyPlayerOperation(zero(), op, assignedDaily('TARGET_DESTROYED'))
+    const replayedFromSameBase = applyPlayerOperation(zero(), op, assignedDaily('TARGET_DESTROYED'))
+    expect(once.daily.questId).toBe('targets_3')
+    expect(once.daily.progress).toBe(3)
+    expect(once.daily.completedAt).toBe(NOW)
+    expect(once.daily.stampAwarded).toBe(true)
+    expect(replayedFromSameBase).toEqual(once)
+  })
+
+  it('keeps pending daily progress provisional without awarding a stamp', () => {
+    const visible = zero()
+    visible.daily = assignedDaily('TARGET_DESTROYED')
+    const next = applyPendingPlayerOperation(visible, operation({
+      byTarget: { word: 1, earth: 1, city: 1 },
+    }))
+    expect(next.daily.progress).toBe(3)
+    expect(next.daily.completedAt).toBeNull()
+    expect(next.daily.stampAwarded).toBe(false)
+  })
+
+  it('keeps the server and client achievement catalogs in lockstep', () => {
+    expect(PLAYER_SYNC_ACHIEVEMENTS).toEqual(ACHIEVEMENTS.map(({ id, name, target, condition }) => ({
+      id,
+      title: name,
+      target,
+      condition,
+    })))
+  })
+
+  it('is deterministic across 200 bounded accepted operation lists and batch groupings', () => {
+    let random = 0x12345678
+    const nextRandom = () => {
+      random = (Math.imul(random, 1664525) + 1013904223) >>> 0
+      return random
+    }
+
+    for (let sample = 0; sample < 200; sample += 1) {
+      const list = Array.from({ length: 1 + (nextRandom() % 12) }, (_, index) => accepted({
+        validHits: nextRandom() % 5,
+        chargedFinishers: nextRandom() % 3,
+        totalTargets: nextRandom() % 2,
+        bestCombo: nextRandom() % 100,
+        addDistinctWeaponIds: nextRandom() % 2 === 0 ? ['hammer'] : ['cat'],
+      }, {
+        operationId: `${String(sample + 1).padStart(8, '0')}-${String(index + 1).padStart(4, '0')}-4000-8000-${String(sample * 20 + index + 1).padStart(12, '0')}`,
+        clientSeq: index + 1,
+        acceptedOrder: index + 1,
+      }))
+      const apply = (items: AcceptedPlayerProgressOperationV1[]) => items.reduce(
+        (state, item) => applyPlayerOperation(state, item),
+        zero()
+      )
+      const whole = apply(list)
+      const split = apply([...list.slice(0, 3), ...list.slice(3)])
+      expect(JSON.stringify(split)).toBe(JSON.stringify(whole))
+      expect(JSON.stringify(apply(list))).toBe(JSON.stringify(whole))
+    }
+  })
+})
