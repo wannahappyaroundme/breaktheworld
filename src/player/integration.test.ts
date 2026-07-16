@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { Game } from '../game'
 import { createDefaultProgress } from '../progress/defaults'
@@ -11,6 +11,8 @@ const PROFILE: PlayerProfile = {
   forcePinChange: false,
   credentialVersion: 1,
 }
+
+afterEach(() => { vi.unstubAllGlobals() })
 
 function progress(seed: string) {
   return {
@@ -162,5 +164,33 @@ describe('guest-first player integration', () => {
     expect(source).toContain('new PlayerSyncStore(')
     expect(source).toContain('new PlayerSyncClient(')
     expect(source).toContain('beforeLogout: () => activeSync?.flush(5_000)')
+  })
+
+  it('defers updates until the first-entry decision settles', async () => {
+    const { readFileSync } = await vi.importActual<{
+      readFileSync(path: URL, encoding: 'utf8'): string
+    }>('node:fs')
+    const source = readFileSync(new URL('../main.ts', import.meta.url), 'utf8')
+
+    expect(source).toContain('autoShowWhatsNew: false')
+    expect(source).toContain('new PlayerEntryChoiceStore(')
+    expect(source).toContain("profileView.openRequired('checking')")
+    expect(source).toContain('decidePlayerEntry(')
+    expect(source).toContain('game.maybeShowWhatsNewOnLoad()')
+    expect(source.indexOf('controller.start()')).toBeLessThan(source.indexOf('decidePlayerEntry('))
+  })
+
+  it('opens the update notice explicitly unless the URL disables it', () => {
+    const game = Object.create(Game.prototype) as Game & Record<string, unknown>
+    const maybeShowOnLoad = vi.fn(() => true)
+    Object.assign(game, { whatsNew: { maybeShowOnLoad } })
+    vi.stubGlobal('location', { search: '' })
+
+    expect(game.maybeShowWhatsNewOnLoad()).toBe(true)
+    expect(maybeShowOnLoad).toHaveBeenCalledOnce()
+
+    vi.stubGlobal('location', { search: '?nonews' })
+    expect(game.maybeShowWhatsNewOnLoad()).toBe(false)
+    expect(maybeShowOnLoad).toHaveBeenCalledOnce()
   })
 })

@@ -80,6 +80,7 @@ const FEVER_DUR = 6
 export interface GameOptions {
   onOpenProfile?: (trigger: HTMLButtonElement) => void
   onFeatureFlags?: (flags: FeatureFlags) => void
+  autoShowWhatsNew?: boolean
 }
 
 const HIDDEN_PLAYER_ACCOUNT: PlayerAccountSnapshot = {
@@ -235,7 +236,7 @@ export class Game {
     this.bar = new WeaponBar(uiRoot, this.weaponRoster, (w) => this.selectWeapon(w))
     this.bar.select(this.weapon.id)
     this.holdHint = new OneTimeHoldHint(document.getElementById('tap-hint'))
-    if (!location.search.includes('nonews')) this.whatsNew.maybeShowOnLoad()
+    if (this.options.autoShowWhatsNew !== false) this.maybeShowWhatsNewOnLoad()
 
     this.input = new Input(canvas, (event) => this.onGesture(event), 'gesture')
     document.addEventListener('visibilitychange', () => {
@@ -262,6 +263,11 @@ export class Game {
     if (location.search.includes('fever')) {
       window.setTimeout(() => this.enterFever('system'), 700)
     }
+  }
+
+  maybeShowWhatsNewOnLoad(): boolean {
+    if (location.search.includes('nonews')) return false
+    return this.whatsNew.maybeShowOnLoad()
   }
 
   setPlayerAccount(snapshot: PlayerAccountSnapshot): void {

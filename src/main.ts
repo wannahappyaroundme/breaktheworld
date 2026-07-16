@@ -13,6 +13,11 @@ import {
 import { BUILT_IN_FLAGS, type FeatureFlags } from './config/feature-flags'
 import { PlayerApi, createPlayerSyncTransport } from './player/api'
 import { PlayerAccountController } from './player/controller'
+import {
+  PlayerEntryChoiceStore,
+  decidePlayerEntry,
+  withEntryTimeout,
+} from './player/entry-choice'
 import { PlayerProfileView } from './player/view'
 import { PlayerOutbox } from './player/outbox'
 import { PlayerSyncStore } from './player/sync-store'
@@ -29,7 +34,14 @@ preloadAssets(import.meta.env.BASE_URL).finally(() => {
   let activeSync: PlayerSyncClient | null = null
   let activeFlags: FeatureFlags = { ...BUILT_IN_FLAGS }
   const profileOutboxes = new Map<string, PlayerOutbox>()
+  const entryChoice = new PlayerEntryChoiceStore({
+    getItem: (key) => window.localStorage.getItem(key),
+    setItem: (key, value) => window.localStorage.setItem(key, value),
+    removeItem: (key) => window.localStorage.removeItem(key),
+  })
+  const guestRememberedAtBoot = entryChoice.isGuestRemembered()
   const game = new Game(canvas, ui, {
+    autoShowWhatsNew: false,
     onOpenProfile: (trigger) => profileView?.open(trigger),
     onFeatureFlags: (flags) => {
       const wasOpen = activeFlags.player_sync_writes
@@ -126,10 +138,28 @@ preloadAssets(import.meta.env.BASE_URL).finally(() => {
     },
     beforeLogout: () => activeSync?.flush(5_000) ?? Promise.resolve(0),
   })
+  let startupSettled = false
+  const finishStartup = () => {
+    if (startupSettled) return
+    startupSettled = true
+    game.maybeShowWhatsNewOnLoad()
+  }
   profileView = new PlayerProfileView(ui, controller, {
     onRetrySave: () => { void activeSync?.retry() },
+    onGuestChosen: () => {
+      entryChoice.rememberGuest()
+      finishStartup()
+    },
+    onAuthenticated: () => {
+      entryChoice.clear()
+      finishStartup()
+    },
+    onLoggedOut: () => {
+      entryChoice.clear()
+    },
   })
-  void controller.start()
+  if (!guestRememberedAtBoot) profileView.openRequired('checking')
+  const restorePromise = controller.start()
 
   void game.connectAnalytics(publicClient)
   const provider = new RemoteQuestConfigProvider({
@@ -141,5 +171,44 @@ preloadAssets(import.meta.env.BASE_URL).finally(() => {
       setItem: (key, value) => window.localStorage.setItem(key, value),
     },
   })
-  void game.loadRemoteConfig(provider)
+  const configPromise = game.loadRemoteConfig(provider)
+  const entryDecisionPromise = Promise.all([restorePromise, configPromise]).then(([restore]) => (
+    decidePlayerEntry({
+      restore,
+      profilesEnabled: activeFlags.player_profiles_ui,
+      guestRemembered: guestRememberedAtBoot,
+    })
+  ))
+
+  void withEntryTimeout(entryDecisionPromise, 8_000, 'fallback-guest').then(async (initial) => {
+    if (initial.timedOut) {
+      profileView?.releaseRequired()
+      const lateDecision = await entryDecisionPromise
+      if (lateDecision === 'player') entryChoice.clear()
+      if (lateDecision === 'force') {
+        profileView?.openRequired('choice')
+        return
+      }
+      finishStartup()
+      return
+    }
+
+    switch (initial.value) {
+      case 'player':
+        entryChoice.clear()
+        profileView?.releaseRequired()
+        finishStartup()
+        break
+      case 'force':
+      case 'choose':
+        profileView?.openRequired('choice')
+        break
+      case 'guest':
+      case 'error':
+      case 'fallback-guest':
+        profileView?.releaseRequired()
+        finishStartup()
+        break
+    }
+  })
 })
