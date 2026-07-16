@@ -1,5 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { isCharacterId } from '../weapons/character-ids'
+import {
+  isManagedPlayerListPayload,
+  isManagedPlayerPayload,
+  isPlayerDeletedPayload,
+  type ManagedPlayer,
+} from '../player/admin-contract'
+import { isUuid, normalizeProfileName, validatePinPair } from '../../supabase/functions/_shared/player-contract'
 
 export const LOGIN_MESSAGE = '로그인 정보를 다시 확인해 주세요.'
 export const SESSION_MESSAGE = '로그인 시간이 끝났어요. 다시 로그인해 주세요.'
@@ -335,6 +342,99 @@ export class AdminApi {
     if (result.error || !isAdminPayload(result.data)) return failure('request', SAVE_MESSAGE)
     this.feedback('admin-updated')
     return { ok: true, data: result.data.admin }
+  }
+
+  async listPlayers(): Promise<ApiResult<ManagedPlayer[]>> {
+    try {
+      const result = await this.client.functions.invoke('manage-player', {
+        body: { action: 'list' },
+      })
+      if (result.error || !isManagedPlayerListPayload(result.data)) {
+        return failure('request', REQUEST_MESSAGE)
+      }
+      return { ok: true, data: result.data.players }
+    } catch {
+      return failure('request', REQUEST_MESSAGE)
+    }
+  }
+
+  async deactivatePlayer(userId: string): Promise<ApiResult<ManagedPlayer>> {
+    if (!isUuid(userId)) return failure('validation', '변경할 프로필을 다시 선택해 주세요.')
+    const requestId = crypto.randomUUID()
+    try {
+      const result = await this.client.functions.invoke('manage-player', {
+        body: { action: 'deactivate', requestId, userId },
+      })
+      if (result.error || !isManagedPlayerPayload(result.data)) {
+        return failure('request', SAVE_MESSAGE)
+      }
+      this.feedback('player-deactivated')
+      return { ok: true, data: result.data.player }
+    } catch {
+      return failure('request', SAVE_MESSAGE)
+    }
+  }
+
+  async resetPlayerPin(
+    userId: string,
+    pin: string,
+    confirmation: string,
+  ): Promise<ApiResult<ManagedPlayer>> {
+    if (!isUuid(userId)) return failure('validation', '변경할 프로필을 다시 선택해 주세요.')
+    const checked = validatePinPair(pin, confirmation)
+    if (!checked.ok) {
+      return failure(
+        'validation',
+        checked.code === 'pin_mismatch'
+          ? 'PIN을 같은 숫자 6자리로 다시 입력해 주세요.'
+          : 'PIN은 숫자 6자리로 입력해 주세요.',
+      )
+    }
+    const requestId = crypto.randomUUID()
+    try {
+      const result = await this.client.functions.invoke('manage-player', {
+        body: {
+          action: 'reset-pin',
+          requestId,
+          userId,
+          pin: checked.pin,
+          pinConfirmation: checked.pin,
+        },
+      })
+      if (result.error || !isManagedPlayerPayload(result.data)) {
+        return failure('request', SAVE_MESSAGE)
+      }
+      this.feedback('player-pin-reset')
+      return { ok: true, data: result.data.player }
+    } catch {
+      return failure('request', SAVE_MESSAGE)
+    }
+  }
+
+  async deletePlayer(
+    userId: string,
+    displayName: string,
+    confirmation: string,
+  ): Promise<ApiResult<null>> {
+    if (!isUuid(userId) || !normalizeProfileName(displayName)) {
+      return failure('validation', '삭제할 프로필을 다시 선택해 주세요.')
+    }
+    if (confirmation !== displayName) {
+      return failure('validation', '삭제할 프로필 ID를 똑같이 입력해 주세요.')
+    }
+    const requestId = crypto.randomUUID()
+    try {
+      const result = await this.client.functions.invoke('manage-player', {
+        body: { action: 'delete', requestId, userId, confirmation },
+      })
+      if (result.error || !isPlayerDeletedPayload(result.data)) {
+        return failure('request', SAVE_MESSAGE)
+      }
+      this.feedback('player-deleted')
+      return { ok: true, data: null }
+    } catch {
+      return failure('request', SAVE_MESSAGE)
+    }
   }
 
   private async verifyAdmin(userId: string, email: string): Promise<ApiResult<AdminSession>> {

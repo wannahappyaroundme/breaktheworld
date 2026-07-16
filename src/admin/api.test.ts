@@ -8,6 +8,7 @@ import {
   type AdminClient,
   type AdminQuestInput,
 } from './api'
+import type { ManagedPlayer } from '../player/admin-contract'
 
 type Response = { data: unknown; error: { code?: string; message: string } | null; status?: number }
 
@@ -82,6 +83,16 @@ const validQuest: AdminQuestInput = {
   activeTo: '2026-07-17T00:00:00.000Z',
   enabled: true,
   version: 1,
+}
+
+const PLAYER_ID = '20000000-0000-4000-8000-000000000001'
+const managedPlayer: ManagedPlayer = {
+  userId: PLAYER_ID,
+  displayName: '예진',
+  status: 'active',
+  forcePinChange: false,
+  createdAt: '2026-07-16T00:00:00.000Z',
+  lastSyncAt: null,
 }
 
 describe('AdminApi authentication', () => {
@@ -281,5 +292,134 @@ describe('AdminApi operations', () => {
     await expect(api.setAdminActive('target', false)).resolves.toMatchObject({ ok: true })
     expect(calls).toContain('function:manage-admin:{"body":{"action":"list"}}')
     expect(calls).toContain('function:manage-admin:{"body":{"action":"set-active","userId":"target","active":false}}')
+  })
+})
+
+describe('AdminApi player accounts', () => {
+  it('lists only strictly validated public player fields', async () => {
+    const { api, fake } = client({
+      functionResponse: { data: { players: [managedPlayer] }, error: null },
+    })
+
+    await expect(api.listPlayers()).resolves.toEqual({ ok: true, data: [managedPlayer] })
+    expect(fake.functions.invoke).toHaveBeenCalledWith('manage-player', {
+      body: { action: 'list' },
+    })
+  })
+
+  it.each([
+    ['extra internal email', { ...managedPlayer, authEmail: 'private@players.invalid' }],
+    ['invalid status', { ...managedPlayer, status: 'blocked' }],
+    ['invalid created date', { ...managedPlayer, createdAt: 'not-a-date' }],
+    ['invalid sync date', { ...managedPlayer, lastSyncAt: '2026-02-30T00:00:00Z' }],
+  ])('rejects malformed player responses: %s', async (_label, player) => {
+    const { api } = client({
+      functionResponse: { data: { players: [player] }, error: null },
+    })
+
+    await expect(api.listPlayers()).resolves.toEqual({
+      ok: false,
+      error: { kind: 'request', message: '저장된 내용을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.' },
+    })
+  })
+
+  it('deactivates through one request ID and reports feedback only after success', async () => {
+    const feedback = vi.fn()
+    const { api, fake } = client({
+      functionResponse: { data: { player: { ...managedPlayer, status: 'inactive' } }, error: null },
+    })
+    api.setMutationFeedback(feedback)
+
+    await expect(api.deactivatePlayer(PLAYER_ID)).resolves.toEqual({
+      ok: true,
+      data: { ...managedPlayer, status: 'inactive' },
+    })
+    expect(fake.functions.invoke).toHaveBeenCalledWith('manage-player', {
+      body: {
+        action: 'deactivate',
+        requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        userId: PLAYER_ID,
+      },
+    })
+    expect(feedback).toHaveBeenCalledWith('player-deactivated')
+  })
+
+  it.each([
+    ['five digits', '24550', '24550', 'PIN은 숫자 6자리로 입력해 주세요.'],
+    ['mismatch', '024550', '024551', 'PIN을 같은 숫자 6자리로 다시 입력해 주세요.'],
+  ])('validates reset PIN before invoking: %s', async (_label, pin, confirmation, message) => {
+    const { api, fake } = client()
+
+    await expect(api.resetPlayerPin(PLAYER_ID, pin, confirmation)).resolves.toEqual({
+      ok: false,
+      error: { kind: 'validation', message },
+    })
+    expect(fake.functions.invoke).not.toHaveBeenCalled()
+  })
+
+  it('resets a PIN without accepting internal fields in the response', async () => {
+    const changed = { ...managedPlayer, forcePinChange: true }
+    const { api, fake } = client({
+      functionResponse: { data: { player: changed }, error: null },
+    })
+
+    await expect(api.resetPlayerPin(PLAYER_ID, '024550', '024550')).resolves.toEqual({
+      ok: true,
+      data: changed,
+    })
+    expect(fake.functions.invoke).toHaveBeenCalledWith('manage-player', {
+      body: {
+        action: 'reset-pin',
+        requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        userId: PLAYER_ID,
+        pin: '024550',
+        pinConfirmation: '024550',
+      },
+    })
+  })
+
+  it('validates exact delete confirmation before invoking', async () => {
+    const { api, fake } = client()
+
+    await expect(api.deletePlayer(PLAYER_ID, '예진', '다른이름')).resolves.toEqual({
+      ok: false,
+      error: { kind: 'validation', message: '삭제할 프로필 ID를 똑같이 입력해 주세요.' },
+    })
+    expect(fake.functions.invoke).not.toHaveBeenCalled()
+  })
+
+  it('deletes only after a strict success payload', async () => {
+    const feedback = vi.fn()
+    const { api, fake } = client({
+      functionResponse: { data: { deleted: true }, error: null },
+    })
+    api.setMutationFeedback(feedback)
+
+    await expect(api.deletePlayer(PLAYER_ID, '예진', '예진')).resolves.toEqual({ ok: true, data: null })
+    expect(fake.functions.invoke).toHaveBeenCalledWith('manage-player', {
+      body: {
+        action: 'delete',
+        requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        userId: PLAYER_ID,
+        confirmation: '예진',
+      },
+    })
+    expect(feedback).toHaveBeenCalledWith('player-deleted')
+  })
+
+  it.each([
+    ['function error', { data: null, error: { message: 'private function error' } }],
+    ['malformed mutation', { data: { player: { ...managedPlayer, credentialVersion: 2 } }, error: null }],
+    ['false deletion', { data: { deleted: false }, error: null }],
+  ])('normalizes player mutation failures: %s', async (_label, functionResponse) => {
+    const { api } = client({ functionResponse })
+    const result = _label === 'false deletion'
+      ? await api.deletePlayer(PLAYER_ID, '예진', '예진')
+      : await api.deactivatePlayer(PLAYER_ID)
+
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: 'request', message: '변경 내용을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.' },
+    })
   })
 })
