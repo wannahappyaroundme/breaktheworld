@@ -17,7 +17,7 @@ export type ProfileCardView =
       kind: 'player'
       displayName: string
       userId: string
-      sync: 'saved' | 'saving' | 'offline' | 'retry'
+      sync: 'saved' | 'saving' | 'offline' | 'retry' | 'auth-expired' | 'memory'
       lastSavedAt: string | null
     }
 
@@ -30,6 +30,7 @@ export type PlayerApiErrorCode =
   | 'signup_closed'
   | 'session_expired'
   | 'change_not_required'
+  | 'pending_sync'
   | 'service_unavailable'
 
 export type PlayerApiResult<T> =

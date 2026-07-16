@@ -285,6 +285,18 @@ describe('player sync handler', () => {
     expect(value.dependencies.accept).not.toHaveBeenCalled()
   })
 
+  it('hydrates one deterministic current daily assignment on an open empty pull', async () => {
+    const value = setup()
+    const response = await createPlayerSyncHandler(value.dependencies)(request())
+    expect(response.status).toBe(200)
+    const payload = await json(response)
+    expect(payload.revision).toBe(1)
+    expect((payload.state as SyncProgressState).daily).toEqual(expect.objectContaining({
+      dayKey: '2026-07-16',
+      questId: expect.stringMatching(/^(charged_finisher_2|characters_3|targets_3)$/),
+    }))
+  })
+
   it('filters a matching accepted prefix and sends only the contiguous remainder', async () => {
     const first = { ...operation(), acceptedOrder: 1, acceptedAt: NOW }
     const second = operation(DEVICE_A, 2, '73000000-0000-4000-8000-000000000002', { validHits: 2 })

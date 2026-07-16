@@ -162,6 +162,8 @@ export class RecordBook {
         saving: '기록을 저장하는 중이에요',
         offline: '연결되면 기록을 저장해요',
         retry: '기록 저장을 다시 확인해 주세요',
+        'auth-expired': '다시 로그인하면 보관한 기록을 이어서 저장해요',
+        memory: '이 화면을 닫기 전까지 기록을 보관해요.',
       }[profile.sync]
       copy.append(
         textElement(this.doc, 'strong', profile.displayName),

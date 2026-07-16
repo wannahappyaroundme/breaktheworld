@@ -50,6 +50,7 @@ export const KNOWN_MOVE_IDS = [
 export interface ProgressPersistence {
   load(): ProgressLoadResult
   save(state: ProgressStateV1, reason: CheckpointReason): ProgressSaveResult
+  replaceFromSync?(state: ProgressStateV1): void
 }
 
 export interface ProgressAnalyticsSink {
@@ -156,6 +157,11 @@ export class GameProgressCoordinator {
       this.catalog,
     )
     if (!parsed.installSeed) return false
+    try {
+      this.store.replaceFromSync?.(parsed)
+    } catch {
+      return false
+    }
     this.state = parsed
     this.recentEventKeys.length = 0
     this.recentEventSet.clear()

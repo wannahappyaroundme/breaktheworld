@@ -36,6 +36,7 @@ import {
 import { BUILT_IN_CATALOG } from './progress/catalog'
 import { kstDayKey } from './progress/day'
 import type { EventSource, GameEvent } from './progress/events'
+import type { ProgressStateV1 } from './progress/types'
 import {
   ProgressStore,
   progressStorageKey,
@@ -126,6 +127,7 @@ export class Game {
   private progressFallback: () => void = () => {}
   private progressScopeGeneration = 0
   private progressScopeIdentity = 'guest'
+  private progressScopeRevision = 0
   private playerAccount: PlayerAccountSnapshot = HIDDEN_PLAYER_ACCOUNT
   private analyticsInstallSeed = ''
 
@@ -267,23 +269,47 @@ export class Game {
     this.refreshProgressUI()
   }
 
-  setProgressScope(scope: PlayerProgressScope, generation: number): void {
+  setProgressScope(
+    scope: PlayerProgressScope,
+    generation: number,
+    persistence?: ProgressPersistence,
+    revision = 0,
+  ): void {
     const identity = scope.kind === 'guest' ? 'guest' : `player:${scope.profile.userId}`
     if (generation < this.progressScopeGeneration) return
     if (generation === this.progressScopeGeneration && identity === this.progressScopeIdentity) return
 
     this.cancelAction('settingsMode')
     this.progress.checkpoint('scopeChange')
-    const next = this.createProgress(this.createProgressStoreForScope(scope))
+    const next = this.createProgress(persistence ?? this.createProgressStoreForScope(scope))
     this.progress = next
     this.progressScopeGeneration = generation
     this.progressScopeIdentity = identity
+    this.progressScopeRevision = revision
     this.combo = 0
     this.recordActive = false
     this.hud.setCombo(0)
     this.controller.setStrongInput(next.state.profile.strongInput)
     this.applyMotionSetting()
     this.refreshProgressUI()
+  }
+
+  applyPlayerProjection(input: {
+    userId: string
+    generation: number
+    revision: number
+    state: ProgressStateV1
+  }): boolean {
+    if (this.progressScopeIdentity !== `player:${input.userId}`) return false
+    if (this.progressScopeGeneration !== input.generation) return false
+    if (input.revision < this.progressScopeRevision) return false
+    this.cancelAction('settingsMode')
+    if (!this.progress.replaceState(input.state)) return false
+    this.progressScopeRevision = input.revision
+    this.controller.setStrongInput(this.progress.state.profile.strongInput)
+    this.applyMotionSetting()
+    this.refreshProgressUI()
+    return true
   }
 
   /** Loads optional operations data after the first playable frame and never rejects into boot. */
@@ -399,7 +425,7 @@ export class Game {
     }
   }
 
-  private createProgressStoreForScope(scope: PlayerProgressScope): ProgressStore {
+  createProgressStoreForScope(scope: PlayerProgressScope): ProgressStore {
     const scoped = scope.kind === 'guest'
       ? { storageKey: undefined, migrateLegacy: true }
       : {

@@ -18,6 +18,7 @@ export type SyncStatus =
   | { kind: 'offline'; pending: number }
   | { kind: 'retry'; pending: number; message: string }
   | { kind: 'auth-expired'; pending: number }
+  | { kind: 'memory'; pending: number }
 
 export interface PlayerSyncTransportResult {
   status: number
@@ -245,7 +246,7 @@ export class PlayerSyncClient {
   private async run(lifecycle: number): Promise<number> {
     const initial = await this.options.outbox.load(this.options.userId)
     this.latestRevision = Math.max(this.latestRevision, initial.snapshot?.revision ?? 0)
-    if (!this.options.writesEnabled()) {
+    if (!this.options.writesEnabled() && initial.operations.length > 0) {
       const pending = initial.operations.length
       this.options.onStatus({ kind: 'offline', pending })
       return pending

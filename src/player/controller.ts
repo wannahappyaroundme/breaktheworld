@@ -4,6 +4,7 @@ import {
 } from '../../supabase/functions/_shared/player-contract'
 import { BUILT_IN_FLAGS, type FeatureFlags } from '../config/feature-flags'
 import type { PlayerApi } from './api'
+import type { SyncStatus } from './sync-client'
 import {
   PLAYER_PRIVACY_NOTICE,
   playerSignupEnabled,
@@ -44,6 +45,7 @@ export interface PlayerAccountControllerOptions {
   flags?: FeatureFlags
   privacyNotice?: PlayerPrivacyNotice
   createRequestId?: () => string
+  beforeLogout?: () => Promise<number>
 }
 
 function invalidInput(message = '입력한 내용을 다시 확인해 주세요.'): PlayerApiResult<never> {
@@ -71,6 +73,7 @@ export class PlayerAccountController {
   private readonly onSnapshot: PlayerAccountControllerOptions['onSnapshot']
   private readonly onScope: PlayerAccountControllerOptions['onScope']
   private readonly createRequestId: () => string
+  private readonly beforeLogout?: () => Promise<number>
   private flags: FeatureFlags
   private privacyNotice: PlayerPrivacyNotice
   private generation = 0
@@ -82,6 +85,7 @@ export class PlayerAccountController {
     this.onSnapshot = options.onSnapshot
     this.onScope = options.onScope
     this.createRequestId = options.createRequestId ?? defaultRequestId
+    this.beforeLogout = options.beforeLogout
     this.flags = { ...(options.flags ?? BUILT_IN_FLAGS) }
     this.privacyNotice = options.privacyNotice ?? PLAYER_PRIVACY_NOTICE
     this.current = this.guestSnapshot()
@@ -201,8 +205,40 @@ export class PlayerAccountController {
     return result
   }
 
-  async logout(): Promise<PlayerApiResult<null>> {
+  setSyncStatus(status: SyncStatus): void {
+    if (this.current.kind !== 'player' || this.current.card.kind !== 'player') return
+    const sync = status.kind === 'auth-expired' ? 'auth-expired' : status.kind
+    this.current = {
+      ...this.current,
+      card: {
+        ...this.current.card,
+        sync,
+        lastSavedAt: status.kind === 'saved'
+          ? status.lastSavedAt
+          : this.current.card.lastSavedAt,
+      },
+    }
+    this.emit()
+  }
+
+  async logout(strategy: 'flush' | 'keep-local' = 'flush'): Promise<PlayerApiResult<null>> {
     const previous = this.current
+    if (strategy === 'flush' && previous.kind === 'player' && this.beforeLogout) {
+      try {
+        const pending = await this.beforeLogout()
+        if (pending > 0) {
+          return {
+            ok: false,
+            error: { code: 'pending_sync', message: '저장할 기록이 이 기기에 남아 있어요.' },
+          }
+        }
+      } catch {
+        return {
+          ok: false,
+          error: { code: 'service_unavailable', message: '기록 저장을 다시 확인해 주세요.' },
+        }
+      }
+    }
     const generation = this.nextGeneration()
     const result = await this.api.signOut()
     if (!this.isCurrent(generation)) return result

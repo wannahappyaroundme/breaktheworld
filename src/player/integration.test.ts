@@ -82,6 +82,52 @@ describe('guest-first player integration', () => {
     expect(createStore).not.toHaveBeenCalled()
   })
 
+  it('hydrates only the current player generation and reapplies input settings without progress events', () => {
+    const game = Object.create(Game.prototype) as Game & Record<string, unknown>
+    const state = createDefaultProgress('server-seed')
+    state.lifetime.validHits = 7
+    state.profile.strongInput = 'doubleTap'
+    const replaceState = vi.fn(() => true)
+    const cancel = vi.fn()
+    const strongInput = vi.fn()
+    const motion = vi.fn()
+    const refresh = vi.fn()
+    Object.assign(game, {
+      progress: { state, replaceState },
+      progressScopeIdentity: `player:${PROFILE.userId}`,
+      progressScopeGeneration: 4,
+      progressScopeRevision: 2,
+      cancelAction: cancel,
+      controller: { setStrongInput: strongInput },
+      applyMotionSetting: motion,
+      refreshProgressUI: refresh,
+    })
+
+    expect(game.applyPlayerProjection({
+      userId: PROFILE.userId,
+      generation: 3,
+      revision: 3,
+      state,
+    })).toBe(false)
+    expect(game.applyPlayerProjection({
+      userId: PROFILE.userId,
+      generation: 4,
+      revision: 1,
+      state,
+    })).toBe(false)
+    expect(game.applyPlayerProjection({
+      userId: PROFILE.userId,
+      generation: 4,
+      revision: 3,
+      state,
+    })).toBe(true)
+    expect(cancel).toHaveBeenCalledWith('settingsMode')
+    expect(replaceState).toHaveBeenCalledWith(state)
+    expect(strongInput).toHaveBeenCalledWith('doubleTap')
+    expect(motion).toHaveBeenCalledOnce()
+    expect(refresh).toHaveBeenCalledOnce()
+  })
+
   it('keeps a restored signed-in profile card visible even when discovery is closed', () => {
     const game = Object.create(Game.prototype) as Game & Record<string, unknown>
     const refresh = vi.fn()
@@ -112,5 +158,9 @@ describe('guest-first player integration', () => {
     expect(source).toContain('getPublicSupabase()')
     expect(source).toContain('getPlayerSupabase()')
     expect(source).toContain('new PlayerApi(playerClient, clearPlayerSupabaseSession)')
+    expect(source).toContain('PlayerOutbox.open(')
+    expect(source).toContain('new PlayerSyncStore(')
+    expect(source).toContain('new PlayerSyncClient(')
+    expect(source).toContain('beforeLogout: () => activeSync?.flush(5_000)')
   })
 })

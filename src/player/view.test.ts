@@ -160,7 +160,10 @@ const guest = (signupEnabled = true): PlayerAccountSnapshot => ({
 
 function ok<T>(data: T): PlayerApiResult<T> { return { ok: true, data } }
 
-function setup(snapshot: PlayerAccountSnapshot = guest()) {
+function setup(
+  snapshot: PlayerAccountSnapshot = guest(),
+  options: { onRetrySave?: () => void | Promise<void> } = {},
+) {
   const doc = new FakeDocument()
   const app = doc.createElement('div')
   const canvas = doc.createElement('canvas')
@@ -217,6 +220,7 @@ function setup(snapshot: PlayerAccountSnapshot = guest()) {
   })
   const view = new PlayerProfileView(ui as unknown as HTMLElement, controller as never, {
     privacyNotice,
+    onRetrySave: options.onRetrySave,
   })
   view.render(snapshot)
   return { doc, ui, recordBook, controller, view, history, fakeWindow }
@@ -326,6 +330,48 @@ describe('PlayerProfileView', () => {
     expect(view.isOpen).toBe(true)
     expect(history.pushState).toHaveBeenCalledTimes(2)
     expect(action(ui, 'force-logout').textContent).toContain('로그아웃하고 게스트로 돌아가기')
+  })
+
+  it('renders exact sync status copy and retry only when action is needed', () => {
+    const retry = vi.fn()
+    const snapshot: PlayerAccountSnapshot = {
+      kind: 'player', profile: PROFILE, forcePinChange: false,
+      card: {
+        visible: true, kind: 'player', displayName: '예진', userId: PROFILE.userId,
+        sync: 'retry', lastSavedAt: null,
+      },
+    }
+    const { ui, view } = setup(snapshot, { onRetrySave: retry })
+    view.open(null)
+    expect(ui.textContent).toContain('기록 저장을 다시 확인해 주세요')
+    action(ui, 'retry-save').click()
+    expect(retry).toHaveBeenCalledOnce()
+  })
+
+  it('offers keep-local logout and continue-saving choices when flush has pending work', async () => {
+    const snapshot: PlayerAccountSnapshot = {
+      kind: 'player', profile: PROFILE, forcePinChange: false,
+      card: {
+        visible: true, kind: 'player', displayName: '예진', userId: PROFILE.userId,
+        sync: 'offline', lastSavedAt: null,
+      },
+    }
+    const retry = vi.fn()
+    const { ui, controller, view } = setup(snapshot, { onRetrySave: retry })
+    controller.logout.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'pending_sync', message: '저장할 기록이 이 기기에 남아 있어요.' },
+    })
+    view.open(null)
+    action(ui, 'logout').click()
+    await flushAsync()
+    expect(ui.textContent).toContain('저장할 기록이 이 기기에 남아 있어요')
+    expect(action(ui, 'logout-keep-local').textContent).toBe('이 기기에 보관하고 로그아웃')
+    expect(action(ui, 'logout-continue').textContent).toBe('계속 저장하기')
+
+    action(ui, 'logout-continue').click()
+    expect(retry).toHaveBeenCalledOnce()
+    expect(controller.logout).toHaveBeenCalledTimes(1)
   })
 
   it('traps focus, closes normally, restores focus, and removes inert state', () => {

@@ -124,6 +124,32 @@ describe('GameProgressCoordinator', () => {
     expect(progress.state).toBe(before)
   })
 
+  it('lets a sync-aware persistence adopt hydration without enqueueing another operation', () => {
+    const state = createDefaultProgress('seed')
+    const store = new FakeStore(state) as FakeStore & {
+      replaceFromSync: ReturnType<typeof vi.fn>
+    }
+    store.replaceFromSync = vi.fn()
+    const progress = new GameProgressCoordinator({
+      store,
+      catalog: targetsCatalog,
+      dayKey: '2026-07-17',
+      nowIso: () => '2026-07-17T03:00:00.000Z',
+      notify: vi.fn(),
+      knownWeaponIds: KNOWN_WEAPON_IDS,
+      knownMoveIds: KNOWN_MOVE_IDS,
+    })
+    const replacement = createDefaultProgress('server-seed')
+    replacement.lifetime.validHits = 4
+
+    expect(progress.replaceState(replacement)).toBe(true)
+    expect(store.replaceFromSync).toHaveBeenCalledWith(expect.objectContaining({
+      installSeed: 'server-seed',
+      lifetime: expect.objectContaining({ validHits: 4 }),
+    }))
+    expect(store.saves).toHaveLength(0)
+  })
+
   it('loads one KST daily challenge and checkpoints a destroy batch exactly once', () => {
     const { progress, store, notify } = coordinator()
 

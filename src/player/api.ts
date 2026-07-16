@@ -6,6 +6,7 @@ import {
   PLAYER_PRIVACY_VERSION,
 } from '../../supabase/functions/_shared/player-contract'
 import type { PlayerApiErrorCode, PlayerApiResult, PlayerProfile } from './types'
+import type { PlayerSyncTransport, PlayerSyncTransportResult } from './sync-client'
 
 export type PlayerClient = Pick<SupabaseClient, 'auth' | 'functions'>
 export type ClearPlayerSession = () => boolean
@@ -31,6 +32,7 @@ const MESSAGES: Record<PlayerApiErrorCode, string> = {
   signup_closed: '프로필 만들기를 다시 열면 바로 시작할 수 있어요.',
   session_expired: '로그인 시간이 끝났어요. 다시 로그인해 주세요.',
   change_not_required: '새 PIN으로 이미 바뀌었어요.',
+  pending_sync: '저장할 기록이 이 기기에 남아 있어요.',
   service_unavailable: '연결을 확인한 뒤 다시 시도해 주세요.',
 }
 
@@ -132,6 +134,49 @@ async function invokeSafely(
     return await client.functions.invoke('player-auth', { body }) as InvokeResult
   } catch {
     return null
+  }
+}
+
+async function syncErrorResult(result: InvokeResult): Promise<PlayerSyncTransportResult> {
+  const context = isRecord(result.error) ? result.error.context : null
+  let body: unknown = result.data
+  let status = 503
+  if (context instanceof Response) {
+    status = context.status
+    try { body = await context.clone().json() } catch { /* A code-only fallback remains safe. */ }
+  }
+  const retryAfterSeconds = isRecord(body) && Number.isSafeInteger(body.retryAfterSeconds)
+    ? Number(body.retryAfterSeconds)
+    : undefined
+  return {
+    status,
+    body: isRecord(body) ? body : { code: 'service_unavailable' },
+    ...(retryAfterSeconds !== undefined && retryAfterSeconds > 0 ? { retryAfterSeconds } : {}),
+  }
+}
+
+export function createPlayerSyncTransport(client: PlayerClient | null): PlayerSyncTransport {
+  return {
+    async send(request) {
+      if (!client) throw new TypeError('player_sync_offline')
+      let result: InvokeResult
+      try {
+        result = await client.functions.invoke('player-sync', { body: request }) as InvokeResult
+      } catch {
+        throw new TypeError('player_sync_network')
+      }
+      if (result.error) return syncErrorResult(result)
+      return { status: 200, body: result.data }
+    },
+    async refreshSession() {
+      if (!client) return false
+      try {
+        const result = await client.auth.refreshSession()
+        return !result.error && result.data.session !== null
+      } catch {
+        return false
+      }
+    },
   }
 }
 

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PLAYER_PRIVACY_VERSION } from '../../supabase/functions/_shared/player-contract'
-import { PlayerApi, type PlayerClient } from './api'
+import { PlayerApi, createPlayerSyncTransport, type PlayerClient } from './api'
 
 const PROFILE = {
   userId: '10000000-0000-4000-8000-000000000001',
@@ -30,6 +30,7 @@ function setup() {
         error: Error | null
       }> => ({ data: { session: null }, error: null })),
       signOut: vi.fn(async (): Promise<{ error: Error | null }> => ({ error: null })),
+      refreshSession: vi.fn(async () => ({ data: { session: {} }, error: null })),
       stopAutoRefresh: vi.fn(),
     },
   }
@@ -188,5 +189,26 @@ describe('PlayerApi', () => {
     await expect(api.checkName('예진')).resolves.toMatchObject({
       ok: false, error: { code: 'service_unavailable' },
     })
+  })
+
+  it('maps the authenticated sync function response and database retry time', async () => {
+    const { client } = setup()
+    const sync = createPlayerSyncTransport(client as unknown as PlayerClient)
+    const request = { deviceId: '10000000-0000-4000-8000-000000000002', previousSeq: 0, operations: [], knownRevision: 0 }
+    client.functions.invoke.mockResolvedValueOnce({ data: { revision: 1 }, error: null })
+    await expect(sync.send(request)).resolves.toEqual({ status: 200, body: { revision: 1 } })
+    expect(client.functions.invoke).toHaveBeenCalledWith('player-sync', { body: request })
+
+    client.functions.invoke.mockResolvedValueOnce({
+      data: null,
+      error: { context: new Response(JSON.stringify({ code: 'rate_limited', retryAfterSeconds: 9 }), { status: 429 }) },
+    })
+    await expect(sync.send(request)).resolves.toEqual({
+      status: 429,
+      body: { code: 'rate_limited', retryAfterSeconds: 9 },
+      retryAfterSeconds: 9,
+    })
+    await expect(sync.refreshSession()).resolves.toBe(true)
+    expect(client.auth.refreshSession).toHaveBeenCalledOnce()
   })
 })

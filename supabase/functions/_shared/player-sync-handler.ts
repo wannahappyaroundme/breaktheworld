@@ -306,6 +306,23 @@ function isAllowedDailyDay(current: string, candidate: string): boolean {
   return age !== null && age >= 0 && age <= MAX_DAILY_AGE_DAYS
 }
 
+function sameDailyState(
+  left: SyncProgressState['daily'],
+  right: SyncProgressState['daily'],
+): boolean {
+  return left.dayKey === right.dayKey
+    && left.questId === right.questId
+    && left.target === right.target
+    && left.progress === right.progress
+    && left.completedAt === right.completedAt
+    && left.stampAwarded === right.stampAwarded
+    && left.distinctIds.length === right.distinctIds.length
+    && left.distinctIds.every((id, index) => id === right.distinctIds[index])
+    && left.quest?.copy === right.quest?.copy
+    && left.quest?.event === right.quest?.event
+    && left.quest?.distinct === right.quest?.distinct
+}
+
 function operationBucket(count: number): '0' | '1-10' | '11-50' | '51-100' {
   if (count === 0) return '0'
   if (count <= 10) return '1-10'
@@ -386,7 +403,23 @@ async function projectOperations(
 
     const operations = await dependencies.loadOperationsAfter(userId, progressRow.lastOperationId)
     if (operations.length === 0) {
-      return { revision: progressRow.revision, state, retryCount: attempt }
+      const assignment = await dependencies.ensureDailyAssignment(
+        userId,
+        currentDayKey,
+        deterministicQuest(progressRow.accountSeed, currentDayKey),
+      )
+      if (sameDailyState(state.daily, assignment.state)) {
+        return { revision: progressRow.revision, state, retryCount: attempt }
+      }
+      const hydrated = { ...state, daily: structuredClone(assignment.state) }
+      const swapped = await dependencies.compareAndSwapProgress(
+        userId,
+        progressRow.revision,
+        hydrated,
+        progressRow.lastOperationId,
+      )
+      if (!swapped) continue
+      return { revision: progressRow.revision + 1, state: hydrated, retryCount: attempt }
     }
     const sorted = [...operations].sort((left, right) => left.acceptedOrder - right.acceptedOrder)
     const dayKeys = [...new Set(sorted.map((operation) => operation.playDayKey))]

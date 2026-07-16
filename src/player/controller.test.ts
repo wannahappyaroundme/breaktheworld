@@ -153,6 +153,39 @@ describe('PlayerAccountController', () => {
     expect(controller.snapshot.kind).toBe('player')
   })
 
+  it('updates the signed profile card from sync status without changing identity', async () => {
+    const { controller, snapshots } = setup()
+    await controller.login('예진', '024550')
+
+    controller.setSyncStatus({ kind: 'saving' })
+    expect(controller.snapshot).toMatchObject({
+      kind: 'player',
+      profile: PROFILE,
+      card: { sync: 'saving', lastSavedAt: null },
+    })
+    controller.setSyncStatus({ kind: 'saved', lastSavedAt: '2026-07-16T12:00:00.000Z' })
+    expect(controller.snapshot).toMatchObject({
+      kind: 'player',
+      card: { sync: 'saved', lastSavedAt: '2026-07-16T12:00:00.000Z' },
+    })
+    expect(snapshots.length).toBeGreaterThan(2)
+  })
+
+  it('keeps pending records on this device until the user chooses a logout action', async () => {
+    const beforeLogout = vi.fn(async () => 2)
+    const { controller, api, scopes } = setup({ beforeLogout })
+    await controller.login('예진', '024550')
+
+    const pending = await controller.logout()
+    expect(pending).toMatchObject({ ok: false, error: { code: 'pending_sync' } })
+    expect(api.signOut).not.toHaveBeenCalled()
+    expect(controller.snapshot.kind).toBe('player')
+
+    await expect(controller.logout('keep-local')).resolves.toEqual(ok(null))
+    expect(api.signOut).toHaveBeenCalledOnce()
+    expect(scopes[scopes.length - 1]?.scope).toEqual({ kind: 'guest' })
+  })
+
   it('fails signup closed when deployment notice is incomplete but keeps login available', async () => {
     const { controller, api } = setup({
       flags: { ...BUILT_IN_FLAGS, player_profiles_ui: true, player_signup: true },

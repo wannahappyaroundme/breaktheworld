@@ -107,6 +107,11 @@ export class PlayerSyncStore implements LocalProgressPersistence {
     await this.appendChain
   }
 
+  replaceFromSync(state: ProgressStateV1): void {
+    this.local.save(state, 'scopeChange')
+    this.lastState = structuredClone(state)
+  }
+
   private enqueue(draft: Parameters<OutboxAdapter['appendDraft']>[1]): void {
     this.appendChain = this.appendChain
       .then(async () => {

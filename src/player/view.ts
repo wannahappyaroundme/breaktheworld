@@ -72,6 +72,7 @@ export class PlayerProfileView {
   private loginForm = { profileName: '', pin: '', showPin: false }
   private forceForm = { pin: '', confirmation: '', showPin: false }
   private privacyExpanded = false
+  private logoutPending = false
 
   constructor(
     private readonly parent: HTMLElement,
@@ -401,7 +402,7 @@ export class PlayerProfileView {
     summary.append(
       avatar,
       element(this.doc, 'strong', this.snapshot.profile.displayName),
-      element(this.doc, 'span', '기록이 저장됐어요'),
+      element(this.doc, 'span', this.syncCopy()),
     )
     const privacy = this.actionButton('프로필과 기록 저장 안내 보기', 'privacy-toggle', false)
     const privacyDetails = this.renderPrivacyNotice()
@@ -411,11 +412,12 @@ export class PlayerProfileView {
       privacyDetails.hidden = !this.privacyExpanded
     })
     const controls: HTMLElement[] = [summary]
-    if (this.onRetrySave) {
+    if (this.onRetrySave && this.snapshot.card.kind === 'player' && this.snapshot.card.sync === 'retry') {
       const retry = this.actionButton('다시 저장', 'retry-save')
       retry.addEventListener('click', () => { void this.onRetrySave?.() })
       controls.push(retry)
     }
+    if (this.logoutPending) controls.push(this.renderPendingLogout())
     const logout = this.actionButton('로그아웃', 'logout')
     logout.addEventListener('click', async () => {
       this.busy = true
@@ -425,13 +427,59 @@ export class PlayerProfileView {
       this.busy = false
       this.error = exactError(result)
       if (result.ok) {
+        this.logoutPending = false
         this.snapshot = this.controller.snapshot
         this.screen = 'guest'
+      } else if (result.error.code === 'pending_sync') {
+        this.logoutPending = true
       }
       this.paint()
     })
     controls.push(privacy, privacyDetails, logout)
     this.body.replaceChildren(...controls)
+  }
+
+  private syncCopy(): string {
+    if (this.snapshot.kind !== 'player' || this.snapshot.card.kind !== 'player') {
+      return '기록이 저장됐어요'
+    }
+    switch (this.snapshot.card.sync) {
+      case 'saved': return '기록이 저장됐어요'
+      case 'saving': return '기록을 저장하는 중이에요'
+      case 'offline': return '인터넷에 연결되면 기록을 저장해요'
+      case 'retry': return '기록 저장을 다시 확인해 주세요'
+      case 'auth-expired': return '다시 로그인하면 보관한 기록을 이어서 저장해요'
+      case 'memory': return '이 화면을 닫기 전까지 기록을 보관해요.'
+    }
+  }
+
+  private renderPendingLogout(): HTMLElement {
+    const section = this.doc.createElement('section')
+    section.className = 'player-profile-logout-pending'
+    section.append(element(this.doc, 'p', '저장할 기록이 이 기기에 남아 있어요.'))
+    const keep = this.actionButton('이 기기에 보관하고 로그아웃', 'logout-keep-local')
+    const continueSaving = this.actionButton('계속 저장하기', 'logout-continue', false)
+    keep.addEventListener('click', async () => {
+      this.busy = true
+      keep.disabled = true
+      const result = await this.controller.logout('keep-local')
+      this.busy = false
+      this.error = exactError(result)
+      if (result.ok) {
+        this.logoutPending = false
+        this.snapshot = this.controller.snapshot
+        this.screen = 'guest'
+      }
+      this.paint()
+    })
+    continueSaving.addEventListener('click', () => {
+      this.logoutPending = false
+      this.error = ''
+      void this.onRetrySave?.()
+      this.paint()
+    })
+    section.append(keep, continueSaving)
+    return section
   }
 
   private renderForcePin(): void {
