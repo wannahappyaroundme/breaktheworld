@@ -65,6 +65,7 @@ export interface GameProgressCoordinatorOptions {
   knownWeaponIds?: readonly string[]
   knownMoveIds?: readonly string[]
   deferDailyAssignment?: boolean
+  onDailyQuestTransition?: (previous: string | null, next: string | null) => unknown
 }
 
 export interface ProgressDispatchResult {
@@ -114,6 +115,7 @@ export class GameProgressCoordinator {
   private readonly nowIso: () => string
   private readonly notify: (notice: NotificationInput) => unknown
   private readonly analytics?: ProgressAnalyticsSink
+  private readonly onDailyQuestTransition?: GameProgressCoordinatorOptions['onDailyQuestTransition']
   private readonly knownWeaponIds: ReadonlySet<string>
   private readonly knownMoveIds: ReadonlySet<string>
   private readonly recentEventKeys: string[] = []
@@ -128,6 +130,7 @@ export class GameProgressCoordinator {
     this.nowIso = options.nowIso
     this.notify = options.notify
     this.analytics = options.analytics
+    this.onDailyQuestTransition = options.onDailyQuestTransition
     this.knownWeaponIds = new Set(options.knownWeaponIds ?? KNOWN_WEAPON_IDS)
     this.knownMoveIds = new Set(options.knownMoveIds ?? KNOWN_MOVE_IDS)
     const loaded = this.store.load().state
@@ -193,6 +196,24 @@ export class GameProgressCoordinator {
     const transitions = options.gamificationEnabled === false
       ? []
       : dailyNoticeTransitions(next.daily, this.state.daily)
+    if (
+      options.gamificationEnabled !== false
+      && next.daily.completedAt === null
+      && this.state.daily.completedAt !== null
+      && this.onDailyQuestTransition
+    ) {
+      try {
+        const pending = this.onDailyQuestTransition(
+          next.daily.completedAt,
+          this.state.daily.completedAt
+        )
+        if (pending && typeof (pending as PromiseLike<unknown>).then === 'function') {
+          void Promise.resolve(pending).catch(() => undefined)
+        }
+      } catch {
+        // Optional analytics never interrupt daily assignment or persistence.
+      }
+    }
     for (const transition of transitions) {
       try {
         this.notify(this.dailyNotice(transition))

@@ -146,6 +146,9 @@ export class Game {
       knownWeaponIds: KNOWN_WEAPON_IDS,
       knownMoveIds: KNOWN_MOVE_IDS,
       deferDailyAssignment: true,
+      onDailyQuestTransition: (previous, next) => {
+        this.analytics.trackQuestTransition(previous, next, 'user', true)
+      },
     })
     this.best = this.progress.state.lifetime.bestCombo
     this.totalTargets = this.progress.state.lifetime.totalTargets

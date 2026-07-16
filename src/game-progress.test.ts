@@ -33,6 +33,7 @@ import type {
   ActionDamageResolution,
   ActionResolution,
 } from './combat/action-controller'
+import { GameAnalyticsBridge, type GameAnalyticsSink } from './analytics/game-bridge'
 
 class FakeStore implements ProgressPersistence {
   readonly saves: Array<{ state: ProgressStateV1; reason: CheckpointReason }> = []
@@ -60,6 +61,7 @@ function coordinator(options: {
   notify?: ReturnType<typeof vi.fn>
   analytics?: ProgressAnalyticsSink
   deferDailyAssignment?: boolean
+  onDailyQuestTransition?: (previous: string | null, next: string | null) => void
 } = {}) {
   const store = new FakeStore(options.state ?? createDefaultProgress('seed'))
   const notify = options.notify ?? vi.fn()
@@ -71,6 +73,7 @@ function coordinator(options: {
     notify,
     analytics: options.analytics,
     deferDailyAssignment: options.deferDailyAssignment,
+    onDailyQuestTransition: options.onDailyQuestTransition,
     knownWeaponIds: KNOWN_WEAPON_IDS,
     knownMoveIds: KNOWN_MOVE_IDS,
   })
@@ -353,10 +356,12 @@ describe('GameProgressCoordinator', () => {
   it('replays bounded pre-catalog evidence into the resolved daily without duplicate side effects', () => {
     const track = vi.fn()
     const notify = vi.fn()
+    const onDailyQuestTransition = vi.fn()
     const { progress, store } = coordinator({
       deferDailyAssignment: true,
       analytics: { track },
       notify,
+      onDailyQuestTransition,
     })
 
     progress.dispatch(actionEvents(81, 10), 'targetDestroy')
@@ -374,6 +379,7 @@ describe('GameProgressCoordinator', () => {
     expect(store.saves.map((save) => save.reason))
       .toEqual(['targetDestroy', 'dailyRollover'])
     expect(notify.mock.calls.filter(([notice]) => notice.kind === 'quest')).toHaveLength(1)
+    expect(onDailyQuestTransition).not.toHaveBeenCalled()
 
     expect(progress.ensureDailyQuest('2026-07-17')).toBe(false)
     expect(track).toHaveBeenCalledTimes(trackedBeforeResolution)
@@ -383,13 +389,75 @@ describe('GameProgressCoordinator', () => {
 
   it('discards pre-catalog daily evidence when resolved gamification is closed', () => {
     const notify = vi.fn()
-    const { progress } = coordinator({ deferDailyAssignment: true, notify })
+    const onDailyQuestTransition = vi.fn()
+    const { progress } = coordinator({
+      deferDailyAssignment: true,
+      notify,
+      onDailyQuestTransition,
+    })
     progress.dispatch(actionEvents(91, 11), 'targetDestroy', { gamificationEnabled: false })
     progress.setCatalog(targetsCatalog)
 
     expect(progress.ensureDailyQuest('2026-07-17', { gamificationEnabled: false })).toBe(true)
     expect(progress.state.daily).toMatchObject({ questId: 'targets_3', progress: 0 })
     expect(notify.mock.calls.filter(([notice]) => notice.kind === 'quest')).toHaveLength(0)
+    expect(onDailyQuestTransition).not.toHaveBeenCalled()
+  })
+
+  it('emits quest-complete analytics once when buffered evidence completes the resolved quest', () => {
+    const target: GameAnalyticsSink = {
+      track: vi.fn(),
+      setEnabled: vi.fn(),
+      trackChargeRelease: vi.fn(),
+      trackChargeCancel: vi.fn(),
+      trackQuestComplete: vi.fn(),
+      flushOnPageHide: vi.fn(),
+    }
+    const analytics = new GameAnalyticsBridge(true)
+    analytics.attach(target)
+    const oneTargetCatalog: QuestCatalogSnapshot = {
+      version: 9,
+      quests: [createQuestDefinition({
+        id: 'remote_target_1',
+        copy: '타겟 하나 부수기',
+        event: 'TARGET_DESTROYED',
+        target: 1,
+      })],
+    }
+    const { progress } = coordinator({
+      deferDailyAssignment: true,
+      analytics,
+      onDailyQuestTransition: (previous, next) => {
+        analytics.trackQuestTransition(previous, next, 'user', true)
+      },
+    })
+
+    progress.dispatch(actionEvents(101, 12), 'targetDestroy')
+    progress.setCatalog(oneTargetCatalog)
+    expect(progress.ensureDailyQuest('2026-07-17')).toBe(true)
+    expect(progress.state.daily.completedAt).not.toBeNull()
+    expect(target.trackQuestComplete).toHaveBeenCalledOnce()
+
+    expect(progress.ensureDailyQuest('2026-07-17')).toBe(false)
+    progress.setCatalog(oneTargetCatalog)
+    expect(progress.ensureDailyQuest('2026-07-17')).toBe(false)
+    expect(target.trackQuestComplete).toHaveBeenCalledOnce()
+  })
+
+  it('does not emit completion analytics for an already completed persisted quest', () => {
+    const state = coordinator().progress.state
+    state.daily = {
+      ...state.daily,
+      progress: state.daily.target,
+      completedAt: '2026-07-17T00:00:00.000Z',
+      stampAwarded: true,
+    }
+    const onDailyQuestTransition = vi.fn()
+    const { progress } = coordinator({ state, onDailyQuestTransition })
+
+    progress.setCatalog(targetsCatalog)
+    expect(progress.ensureDailyQuest('2026-07-17')).toBe(false)
+    expect(onDailyQuestTransition).not.toHaveBeenCalled()
   })
 
   it('rolls an open session at the KST 04:00 boundary before the next event exactly once', () => {
