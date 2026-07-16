@@ -574,10 +574,13 @@ function applyAccountDelta(
 
   const settings = delta.settings
   if ('selectedTitle' in settings) {
-    if (settings.selectedTitle === null) state.profile.selectedTitle = null
+    const selectedTitle = settings.selectedTitle
+    if (selectedTitle === null) state.profile.selectedTitle = null
     else {
-      const achievement = PLAYER_SYNC_ACHIEVEMENTS.find(({ title }) => title === settings.selectedTitle)
-      if (achievement && state.achievements[achievement.id]) state.profile.selectedTitle = settings.selectedTitle
+      const achievement = PLAYER_SYNC_ACHIEVEMENTS.find(({ title }) => title === selectedTitle)
+      if (achievement && selectedTitle !== undefined && state.achievements[achievement.id]) {
+        state.profile.selectedTitle = selectedTitle
+      }
     }
   }
   if (settings.cinnamorollSkin !== undefined) state.profile.skins.cinnamoroll = settings.cinnamorollSkin
