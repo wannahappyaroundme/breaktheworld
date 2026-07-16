@@ -2,13 +2,13 @@ import './style.css'
 
 import { AdminApi } from './api'
 import { AdminView } from './view'
-import { getSupabase } from '../services/supabase'
+import { getAdminSupabase } from '../services/supabase'
 
 const root = document.getElementById('admin-app')
 
 if (!root) throw new Error('Admin app root is missing')
 
-const supabase = getSupabase()
+const supabase = getAdminSupabase()
 
 if (!supabase) {
   const card = document.createElement('section')
