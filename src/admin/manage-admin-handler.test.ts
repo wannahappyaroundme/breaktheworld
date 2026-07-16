@@ -7,6 +7,7 @@ function dependency(options: {
   role?: 'owner' | 'operator'
   active?: boolean
   target?: { user_id: string; role: 'owner' | 'operator'; active: boolean } | null
+  authFailureFor?: string
 } = {}) {
   const calls: string[] = []
   const caller = options.caller === null ? null : options.caller ?? { id: 'caller' }
@@ -32,18 +33,29 @@ function dependency(options: {
       const query = {
         select(columns: string) { calls.push(`admin:select:${columns}`); return query },
         eq(column: string, value: string) { calls.push(`admin:eq:${column}:${value}`); return query },
-        update(value: unknown) { calls.push(`admin:update:${JSON.stringify(value)}`); return query },
+        update(value: unknown) {
+          calls.push(`admin:update:${JSON.stringify(value)}`)
+          if (adminRows[0] && value && typeof value === 'object'
+            && typeof (value as { active?: unknown }).active === 'boolean') {
+            adminRows[0].active = (value as { active: boolean }).active
+          }
+          return query
+        },
         maybeSingle: async () => ({ data: adminRows[0] ?? null, error: null }),
         then(resolve: (result: unknown) => void) { resolve({ data: adminRows, error: null }) },
       }
       return query
     },
     auth: { admin: {
-      getUserById: vi.fn(async (id: string) => ({ data: { user: { id, email: `${id}@example.test`, app_metadata: { secret: 'not-returned' } } }, error: null })),
+      getUserById: vi.fn(async (id: string) => (
+        id === options.authFailureFor
+          ? { data: { user: null }, error: { message: 'auth unavailable' } }
+          : { data: { user: { id, email: `${id}@example.test`, app_metadata: { secret: 'not-returned' } } }, error: null }
+      )),
     } },
   }
   const getAdminClient = vi.fn(() => adminClient)
-  return { dependencies: { userClient, getAdminClient } as unknown as ManageAdminDependencies, calls, getAdminClient }
+  return { dependencies: { userClient, getAdminClient } as unknown as ManageAdminDependencies, calls, getAdminClient, adminRows }
 }
 
 async function body(response: Response) {
@@ -92,6 +104,16 @@ describe('manage-admin handler', () => {
     expect(JSON.stringify(payload)).not.toContain('secret')
   })
 
+  it('returns a safe failure instead of an incomplete list when Auth lookup fails', async () => {
+    const { dependencies } = dependency({ authFailureFor: 'target' })
+    const response = await createManageAdminHandler(dependencies)(new Request('http://local', {
+      method: 'POST', body: JSON.stringify({ action: 'list' }),
+    }))
+
+    expect(response.status).toBe(500)
+    expect(await body(response)).toEqual({ message: 'request_unavailable' })
+  })
+
   it.each([
     ['unknown action', { action: 'create' }],
     ['extra list key', { action: 'list', role: 'owner' }],
@@ -122,6 +144,18 @@ describe('manage-admin handler', () => {
     expect(response.status).toBe(200)
     expect(calls).toContain('admin:update:{"active":false}')
     expect(await body(response)).toEqual({ admin: { id: 'target', email: 'target@example.test', role: 'operator', active: false } })
+  })
+
+  it('checks the Auth user before update and leaves active unchanged when lookup fails', async () => {
+    const { dependencies, calls, adminRows } = dependency({ authFailureFor: 'target' })
+    const response = await createManageAdminHandler(dependencies)(new Request('http://local', {
+      method: 'POST', body: JSON.stringify({ action: 'set-active', userId: 'target', active: false }),
+    }))
+
+    expect(response.status).toBe(500)
+    expect(await body(response)).toEqual({ message: 'request_unavailable' })
+    expect(calls.some((call) => call.startsWith('admin:update'))).toBe(false)
+    expect(adminRows[0]?.active).toBe(true)
   })
 
   it('returns not found without creating an account', async () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   AdminView,
@@ -8,6 +8,129 @@ import {
   nextDialogFocusIndex,
   questInputFromForm,
 } from './view'
+import type { AdminApi, ApiResult, DailyMetrics, ManagedAdmin } from './api'
+
+type FakeListener = (event: { preventDefault(): void }) => void
+
+class FakeElement {
+  readonly children: FakeElement[] = []
+  readonly dataset: Record<string, string> = {}
+  readonly attributes = new Map<string, string>()
+  private readonly listeners = new Map<string, FakeListener[]>()
+  private ownText = ''
+  className = ''
+  id = ''
+  disabled = false
+  hidden = false
+  type = ''
+  parent: FakeElement | null = null
+
+  constructor(readonly tagName: string) {}
+
+  get textContent(): string {
+    return this.ownText + this.children.map((child) => child.textContent).join('')
+  }
+
+  set textContent(value: string) {
+    this.ownText = value
+    this.children.splice(0)
+  }
+
+  append(...nodes: FakeElement[]): void {
+    for (const node of nodes) {
+      node.parent = this
+      this.children.push(node)
+    }
+  }
+
+  replaceChildren(...nodes: FakeElement[]): void {
+    this.ownText = ''
+    this.children.splice(0)
+    this.append(...nodes)
+  }
+
+  setAttribute(name: string, value: string): void {
+    this.attributes.set(name, value)
+  }
+
+  addEventListener(type: string, listener: FakeListener): void {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener])
+  }
+
+  click(): void {
+    for (const listener of this.listeners.get('click') ?? []) listener({ preventDefault() {} })
+  }
+
+  focus(): void {}
+
+  querySelectorAll<T>(): T[] {
+    return []
+  }
+}
+
+function installFakeDocument(): void {
+  const body = new FakeElement('BODY')
+  vi.stubGlobal('document', {
+    body,
+    activeElement: null,
+    createElement: (tag: string) => new FakeElement(tag.toUpperCase()),
+  })
+}
+
+function descendants(root: FakeElement): FakeElement[] {
+  return [root, ...root.children.flatMap(descendants)]
+}
+
+function byText(root: FakeElement, tagName: string, copy: string): FakeElement {
+  const result = descendants(root).find((node) => node.tagName === tagName && node.textContent === copy)
+  if (!result) throw new Error(`Missing ${tagName} with copy: ${copy}`)
+  return result
+}
+
+function sectionByHeading(root: FakeElement, heading: string): FakeElement {
+  const title = byText(root, 'H2', heading)
+  const section = descendants(root).find((node) => node.tagName === 'SECTION' && descendants(node).includes(title))
+  if (!section) throw new Error(`Missing section: ${heading}`)
+  return section
+}
+
+const EMPTY_METRICS: DailyMetrics = {
+  visits: 0,
+  firstValidAttacks: 0,
+  firstDestroys: 0,
+  chargeCompletionRate: 0,
+  questsCompleted: 0,
+  sharesCompleted: 0,
+  characterUses: [],
+  averageFinishActions: null,
+}
+
+function dashboardApi(options: {
+  metrics?: ApiResult<DailyMetrics>
+  admins?: ApiResult<ManagedAdmin[]>
+  signOut?: ReturnType<typeof vi.fn>
+} = {}): AdminApi {
+  return {
+    restoreSession: vi.fn(async () => ({
+      ok: true,
+      data: { userId: 'owner', email: 'owner@example.test', role: 'owner' },
+    })),
+    listQuests: vi.fn(async () => ({ ok: true, data: [] })),
+    listFlags: vi.fn(async () => ({ ok: true, data: [] })),
+    loadDailyMetrics: vi.fn(async () => options.metrics ?? { ok: true, data: EMPTY_METRICS }),
+    listAdmins: vi.fn(async () => options.admins ?? { ok: true, data: [] }),
+    signOut: options.signOut ?? vi.fn(async () => ({ ok: true, data: null })),
+  } as unknown as AdminApi
+}
+
+async function flushPromises(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('operator view helpers', () => {
   it('ignores signed-out events while login verification has no dashboard session', () => {
@@ -72,5 +195,57 @@ describe('operator view helpers', () => {
     expect(source).toContain("this.section('오늘의 도전 관리'")
     expect(source).toContain("element('table', 'admin-quest-table')")
     expect(source).toContain("toggle.setAttribute('role', 'switch')")
+  })
+
+  it.each(['metrics', 'accounts'] as const)(
+    'keeps challenge and flag controls usable when %s fails',
+    async (failedSection) => {
+      installFakeDocument()
+      const failure = { ok: false, error: { kind: 'request', message: '이 영역을 불러오지 못했어요.' } } as const
+      const root = new FakeElement('DIV')
+      const api = dashboardApi({
+        metrics: failedSection === 'metrics' ? failure : undefined,
+        admins: failedSection === 'accounts' ? failure : undefined,
+      })
+
+      await new AdminView(root as unknown as HTMLElement, api).start()
+
+      const quests = sectionByHeading(root, '오늘의 도전 관리')
+      const flags = sectionByHeading(root, '기능 설정')
+      expect(byText(quests, 'BUTTON', '새 도전 만들기').disabled).toBe(false)
+      expect(descendants(flags).filter((node) => node.attributes.get('role') === 'switch')).toHaveLength(3)
+
+      const failed = sectionByHeading(root, failedSection === 'metrics' ? '사용 통계' : '운영자 계정')
+      expect(failed.textContent).toContain('이 영역을 불러오지 못했어요.')
+      expect(byText(failed, 'BUTTON', '다시 불러오기').disabled).toBe(false)
+      expect(root.textContent).toContain('세상 부수기 관리')
+    },
+  )
+
+  it('keeps the dashboard on logout failure and shows login only after confirmed success', async () => {
+    installFakeDocument()
+    const signOut = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: 'request', message: '연결을 확인한 뒤 로그아웃을 다시 눌러 주세요.' },
+      })
+      .mockResolvedValueOnce({ ok: true, data: null })
+    const root = new FakeElement('DIV')
+    await new AdminView(root as unknown as HTMLElement, dashboardApi({ signOut })).start()
+    const logout = byText(root, 'BUTTON', '로그아웃')
+
+    logout.click()
+    await flushPromises()
+
+    expect(root.textContent).toContain('세상 부수기 관리')
+    expect(root.textContent).toContain('연결을 확인한 뒤 로그아웃을 다시 눌러 주세요.')
+    expect(root.textContent).not.toContain('운영자 로그인')
+    expect(logout.disabled).toBe(false)
+
+    logout.click()
+    await flushPromises()
+
+    expect(root.textContent).toContain('운영자 로그인')
+    expect(root.textContent).not.toContain('세상 부수기 관리')
   })
 })

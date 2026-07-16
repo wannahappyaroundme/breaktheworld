@@ -16,6 +16,7 @@ function client(options: {
   authUser?: { id: string; email?: string } | null
   sessionUser?: { id: string; email?: string } | null
   signInError?: boolean
+  signOutFailure?: 'returned' | 'thrown'
   functionResponse?: Response | ((request: unknown) => Response)
 } = {}) {
   const calls: string[] = []
@@ -39,7 +40,14 @@ function client(options: {
     return builder
   }
 
-  const signOut = vi.fn(async () => ({ error: null }))
+  const signOut = vi.fn(async () => {
+    if (options.signOutFailure === 'thrown') throw new Error('network unavailable')
+    return {
+      error: options.signOutFailure === 'returned'
+        ? { code: 'request_failed', message: 'raw logout detail' }
+        : null,
+    }
+  })
   const fake = {
     auth: {
       signInWithPassword: vi.fn(async ({ email }: { email: string; password: string }) => ({
@@ -126,10 +134,25 @@ describe('AdminApi authentication', () => {
   it('signs out through the normalized API boundary', async () => {
     const { api, signOut } = client()
 
-    await api.signOut()
+    await expect(api.signOut()).resolves.toEqual({ ok: true, data: null })
 
     expect(signOut).toHaveBeenCalledOnce()
   })
+
+  it.each(['returned', 'thrown'] as const)(
+    'keeps logout failure visible when Supabase reports a %s error',
+    async (signOutFailure) => {
+      const { api } = client({ signOutFailure })
+
+      await expect(api.signOut()).resolves.toEqual({
+        ok: false,
+        error: {
+          kind: 'request',
+          message: '연결을 확인한 뒤 로그아웃을 다시 눌러 주세요.',
+        },
+      })
+    },
+  )
 })
 
 describe('quest validation', () => {

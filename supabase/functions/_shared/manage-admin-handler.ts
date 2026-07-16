@@ -117,7 +117,9 @@ export function createManageAdminHandler(dependencies: ManageAdminDependencies) 
         if (!row || !['owner', 'operator'].includes(row.role) || typeof row.active !== 'boolean') continue
         const userResult = await adminClient.auth.admin.getUserById(row.user_id)
         const user = userResult.data.user
-        if (userResult.error || !user || user.id !== row.user_id || typeof user.email !== 'string') continue
+        if (userResult.error || !user || user.id !== row.user_id || typeof user.email !== 'string') {
+          return json(500, { message: 'request_unavailable' })
+        }
         admins.push(adminShape(row, user.email))
       }
       admins.sort((left, right) => left.email.localeCompare(right.email))
@@ -143,16 +145,17 @@ export function createManageAdminHandler(dependencies: ManageAdminDependencies) 
       if (targetResult.error) return json(500, { message: 'request_unavailable' })
       if (!target) return json(404, { message: 'account_not_found' })
 
-      const updateResult = await (adminClient.from('admin_users') as AdminQuery)
-        .update({ active: input.active })
-        .eq('user_id', input.userId)
-      if (updateResult.error) return json(500, { message: 'request_unavailable' })
-
       const userResult = await adminClient.auth.admin.getUserById(target.user_id)
       const user = userResult.data.user
       if (userResult.error || !user || user.id !== target.user_id || typeof user.email !== 'string') {
         return json(500, { message: 'request_unavailable' })
       }
+
+      const updateResult = await (adminClient.from('admin_users') as AdminQuery)
+        .update({ active: input.active })
+        .eq('user_id', input.userId)
+      if (updateResult.error) return json(500, { message: 'request_unavailable' })
+
       return json(200, { admin: adminShape({ ...target, active: input.active }, user.email) })
     }
 

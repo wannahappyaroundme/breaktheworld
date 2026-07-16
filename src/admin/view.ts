@@ -96,6 +96,15 @@ export function characterDisplayName(value: string): string {
   return isCharacterId(value) ? CHARACTER_DISPLAY_NAMES[value] : '알 수 없는 캐릭터'
 }
 
+export type DashboardSectionState<T> =
+  | { status: 'ready'; data: T }
+  | { status: 'error'; message: string; nextAction: '다시 불러오기' }
+
+export function dashboardSectionState<T>(result: ApiResult<T>): DashboardSectionState<T> {
+  if (result.ok) return { status: 'ready', data: result.data }
+  return { status: 'error', message: result.error.message, nextAction: '다시 불러오기' }
+}
+
 function localDateTime(value: string | null): string {
   if (!value) return ''
   const date = new Date(value)
@@ -228,11 +237,10 @@ export class AdminView {
         ? this.api.listAdmins()
         : Promise.resolve({ ok: true, data: [] } as ApiResult<ManagedAdmin[]>),
     ])
-    const failed = [quests, flags, metrics, admins].find((result) => !result.ok)
-    if (failed && !failed.ok) {
-      this.renderLoadError(failed.error.message)
-      return
-    }
+    const questState = dashboardSectionState(quests)
+    const flagState = dashboardSectionState(flags)
+    const metricState = dashboardSectionState(metrics)
+    const adminState = dashboardSectionState(admins)
 
     const layout = element('div', 'admin-dashboard')
     this.root.className = 'admin-shell'
@@ -242,7 +250,18 @@ export class AdminView {
     const identity = element('div', 'admin-identity')
     identity.append(text('span', this.session.email), text('small', this.session.role === 'owner' ? '전체 운영자' : '운영자'))
     const signOut = actionButton('로그아웃')
-    signOut.addEventListener('click', () => void this.api.signOut().finally(() => this.renderLogin()))
+    signOut.addEventListener('click', () => {
+      setBusy(signOut, true)
+      void this.api.signOut().then((result) => {
+        if (!result.ok) {
+          setBusy(signOut, false)
+          this.announce(result.error.message)
+          return
+        }
+        this.session = null
+        this.renderLogin()
+      })
+    })
     const account = element('div', 'admin-header__account')
     account.append(identity, signOut)
     header.append(brand, account)
@@ -254,10 +273,18 @@ export class AdminView {
 
     const grid = element('main', 'admin-grid')
     grid.append(
-      this.renderQuestSection((quests as { ok: true; data: AdminQuest[] }).data),
-      this.renderFlagSection((flags as { ok: true; data: FeatureFlag[] }).data),
-      this.renderMetricSection((metrics as { ok: true; data: DailyMetrics }).data),
-      this.renderAdminSection((admins as { ok: true; data: ManagedAdmin[] }).data),
+      questState.status === 'ready'
+        ? this.renderQuestSection(questState.data)
+        : this.renderSectionError('오늘의 도전 관리', '게임에 보여줄 오늘의 도전을 만들고 기간을 정해요.', questState),
+      flagState.status === 'ready'
+        ? this.renderFlagSection(flagState.data)
+        : this.renderSectionError('기능 설정', '게임에서 사용할 기능을 저장 즉시 바꿔요.', flagState),
+      metricState.status === 'ready'
+        ? this.renderMetricSection(metricState.data)
+        : this.renderSectionError('사용 통계', '개인을 알아볼 수 없는 게임 사용 흐름만 보여줘요.', metricState),
+      adminState.status === 'ready'
+        ? this.renderAdminSection(adminState.data)
+        : this.renderSectionError('운영자 계정', '운영 도구를 사용할 계정 상태를 확인해요.', adminState),
     )
     layout.append(header, this.live, grid)
     this.root.replaceChildren(layout)
@@ -270,16 +297,19 @@ export class AdminView {
     }
   }
 
-  private renderLoadError(message: string): HTMLElement {
-    const card = element('section', 'admin-auth-card')
-    card.append(text('span', '다시 연결하기', 'admin-eyebrow'), text('h1', '운영 내용을 다시 불러와 주세요.'), text('p', message, 'admin-lead'))
-    const retry = actionButton('다시 불러오기', 'primary')
-    retry.addEventListener('click', () => void this.renderDashboard())
-    const signOut = actionButton('다른 계정으로 로그인')
-    signOut.addEventListener('click', () => void this.api.signOut().finally(() => this.renderLogin()))
-    card.append(retry, signOut)
-    this.root.replaceChildren(card)
-    return card
+  private renderSectionError(
+    titleValue: string,
+    copy: string,
+    state: Extract<DashboardSectionState<unknown>, { status: 'error' }>,
+  ): HTMLElement {
+    const { section, body } = this.section(titleValue, copy)
+    const retry = actionButton(state.nextAction, 'primary')
+    retry.addEventListener('click', () => {
+      setBusy(retry, true)
+      void this.renderDashboard()
+    })
+    body.append(text('p', state.message, 'admin-empty'), retry)
+    return section
   }
 
   private section(titleValue: string, copy: string): { section: HTMLElement; head: HTMLElement; body: HTMLElement } {

@@ -5,6 +5,7 @@ export const LOGIN_MESSAGE = '로그인 정보를 다시 확인해 주세요.'
 export const SESSION_MESSAGE = '로그인 시간이 끝났어요. 다시 로그인해 주세요.'
 const REQUEST_MESSAGE = '저장된 내용을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'
 const SAVE_MESSAGE = '변경 내용을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'
+const SIGN_OUT_MESSAGE = '연결을 확인한 뒤 로그아웃을 다시 눌러 주세요.'
 
 export type AdminClient = Pick<SupabaseClient, 'auth' | 'from' | 'functions'>
 export type AdminRole = 'owner' | 'operator'
@@ -212,8 +213,14 @@ export class AdminApi {
     return verified
   }
 
-  async signOut(): Promise<void> {
-    await this.clearSession()
+  async signOut(): Promise<ApiResult<null>> {
+    try {
+      const result = await this.client.auth.signOut()
+      if (result.error) return failure('request', SIGN_OUT_MESSAGE)
+      return { ok: true, data: null }
+    } catch {
+      return failure('request', SIGN_OUT_MESSAGE)
+    }
   }
 
   async listQuests(): Promise<ApiResult<AdminQuest[]>> {
