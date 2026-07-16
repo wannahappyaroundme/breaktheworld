@@ -392,6 +392,9 @@ verify_jwt = true
 [functions.player-auth]
 verify_jwt = false
 
+[functions.manage-player]
+verify_jwt = true
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
