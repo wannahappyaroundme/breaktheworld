@@ -10,7 +10,8 @@
     "lint:copy": "node --test scripts/copy-lint.test.mjs && node scripts/copy-lint.mjs",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:player-auth": "node --experimental-websocket scripts/verify-player-auth.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.109.0",

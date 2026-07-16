@@ -5,6 +5,9 @@ dist-ssr
 .DS_Store
 .vite
 .superpowers/
+supabase/.temp/
+supabase/.branches/
+supabase/.env.local
 
 # logs
 *.log
