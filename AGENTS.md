@@ -3,37 +3,38 @@
 ## Status
 
 - Date: 2026-07-16
-- Branch: `main`
+- Branch: `codex/gamification-upgrade`
 - Product: personal, non-commercial, mobile-only stress-relief web game.
-- Current code is shipped v1; approved gamification design is NOT implemented.
-- Approved design: `docs/superpowers/specs/2026-07-16-gamification-character-variety-design.md`
-- Next gate: PM reviews written spec, then create 3 implementation plans. Never code before plan approval.
+- Gamification, character variety, progress, analytics, and operator UI are implemented and locally verified on this branch; they are not merged or deployed.
+- Player profile/sync design is approved: `docs/superpowers/specs/2026-07-16-player-profile-sync-design.md`.
+- Next gate: PM reviews 3 player-profile implementation plans. Never code before plan approval.
 
 ## Product
 
-Target: phone users who want immediate, cute, non-gory destruction. Core promise: tap/drag/hold to break the world with strong audiovisual feedback. No signup for players.
+Target: phone users who want immediate, cute, non-gory destruction. Core promise: tap/drag/hold to break the world with strong audiovisual feedback. Guest play remains immediate; optional player profiles are planned for cross-device sync.
 
 ### Implemented
 
 - Targets: word `세상` → earth → city loop, sky drop-in.
-- Weapons: 12 elemental/physical + 9 distinct characters; 2 legacy character appearances are currently separate entries, so registry currently exposes 23 entries despite docs saying 21.
-- Tap/drag/multitouch, combo/best combo, FEVER, golden targets, haptics, share card, what's-new modal, PWA.
-- Local keys: `btw.bestCombo`, `btw.totalTargets`.
+- Weapons: 12 elemental/physical + 9 characters; legacy Cinnamoroll/Ditto appearances are classic skins, registry exposes 21 entries.
+- Tap/drag/charge input state machine, per-character partial moves/signatures, bounded seeded variation, max-3-action finish invariant.
+- Combo/best combo, FEVER, golden targets, haptics, share card, what's-new modal, PWA.
+- Versioned `btw.progress.v1`, legacy migration, one daily quest, 5 permanent stamps, record-book sheet, queued notifications.
+- Supabase admin auth, quest CRUD/scheduling, feature flags, enum-only anonymous analytics, static/local fallback.
+- Operator dashboard includes admin account management, quest/flag operations, and daily metrics.
 
 ### Approved, not implemented
 
-- Input state machine: tap (<450ms), drag (>=16px), charge (>=450ms), max charge (1.1s), release-to-fire, cancellation safety.
-- All weapons get charge behavior; 9 characters get 2 partial tap moves + 1 charged signature.
-- Initial-fragment damage budget; max 3 valid character actions to finish; no zero-damage remainder.
-- Seeded bounded variation; no same tap move 3 times consecutively.
-- Legacy Cinnamoroll/Ditto entries become `classic` skins; registry returns to 21 weapons.
-- Versioned `btw.progress.v1` store; migrate legacy keys only after new save succeeds.
-- One daily quest, 5 permanent stamps, record-book bottom sheet, queued notifications.
-- Supabase admin auth, quest CRUD, feature flags, enum-only anonymous aggregates; static/local fallback.
+- Guest-first optional player profiles: globally unique 2-12 char Hangul/ASCII/digit ID and exact 6-digit numeric PIN.
+- Explicit duplicate check plus DB UNIQUE; ASCII case-insensitive ID comparison.
+- New profiles start at zero; guest state stays device-local and is never imported.
+- Persistent multi-device sessions, local logout, admin PIN reset with global session invalidation.
+- Idempotent operation sync for all progress/settings; offline outbox and server projection.
+- Record-book profile card/full-screen profile; default circle avatar; future My Page extension point.
 
 ### Explicit non-goals
 
-Player accounts/sync, leaderboards, PvP, XP/levels, currency/store/energy, punitive streaks, new characters/targets, native app, monetization/public marketing rights work.
+Leaderboards, PvP, XP/levels, currency/store/energy, punitive streaks, new characters/targets, native app, monetization/public marketing rights work. Player email/phone, social login, guest-record import, public profiles, and full My Page remain out of the current profile increment.
 
 ## Architecture
 
@@ -61,28 +62,33 @@ Rules:
 
 ```text
 src/main.ts                 boot
-src/game.ts                 current orchestration; approved plan will split state responsibilities
+src/game.ts                 game orchestration
 src/engine/                 loop, renderer, input, camera, particles, audio, math/rng
 src/effects/                effect manager + primitives
 src/targets/                target interface, breakable, target types, manager
 src/weapons/                weapon contracts, registry, elemental, characters, bar
 src/art/                    canvas/doodle art + optional PNG assets
-src/ui/                     HUD, what's new, share card
+src/progress/               local progress state, reducer, catalog, validation, store
+src/combat/                 action state and resolved attack contracts
+src/analytics/              privacy-limited event mapping and transport
+src/admin/                  operator application, API, view, styles
+src/ui/                     HUD, record book, notifications, what's new, share card
+supabase/                   migrations, Edge Functions, pgTAP tests, seed
 docs/superpowers/specs/     approved product/design specs
 docs/superpowers/plans/     implementation plans
 public/                     PWA icons, OG image, optional assets
 dist/                       generated build; do not hand-edit
 ```
 
-Planned focused modules and exact paths are locked in implementation plans, not this SSOT.
+New profile module paths and interfaces are locked in approved implementation plans, not this SSOT.
 
 ## Data
 
-### Local planned schema
+### Local implemented schema
 
 `btw.progress.v1`: schema/catalog version, install seed, lifetime counters, by-weapon uses/finishes/seen moves, by-target destroys, achievements, one daily quest, selected title/skins/input/motion/haptics settings.
 
-### Supabase planned schema
+### Supabase implemented schema
 
 - `admin_users(user_id, role, active)`
 - `quest_catalog(id, copy, event_type, target, active_from, active_to, enabled, version)`
@@ -92,9 +98,17 @@ Planned focused modules and exact paths are locked in implementation plans, not 
 
 RLS centrally checks `admin_users`. Browser gets anon key only. Service-role key stays server-side. Anonymous writes go through a validating/rate-limited Edge Function. Admin errors must not reveal whether an account exists.
 
+### Supabase player profile schema, approved not implemented
+
+- `player_profiles`, `player_auth_aliases`, `player_progress`
+- `player_devices`, `player_sync_operations`
+- `player_auth_rate_limits`, `admin_audit_logs`
+
+Player browser writes are forbidden. Player Auth/Sync Edge Functions validate publishable or user JWT requests; custom access-token claims carry `credential_version`. Sync uses UUID ownership, device sequence, operation ID, and transactional projection.
+
 ## Admin
 
-Required in approved delivery:
+Implemented on branch:
 
 - ID/PW login
 - admin account list/activate/deactivate
@@ -103,10 +117,12 @@ Required in approved delivery:
 - daily funnel and character/hold metrics
 - no player content or raw PII
 
+Approved next increment: player list/status, temporary 6-digit PIN reset, global session invalidation, force-change state, deactivate, hard delete.
+
 ## Hosting / APIs
 
 - Game/admin static bundle: GitHub Pages via `.github/workflows/deploy.yml`.
-- Planned backend: Supabase Auth/Postgres/Edge Functions.
+- Backend: Supabase Auth/Postgres/Edge Functions; player Auth/Sync functions are planned.
 - Remote quest config caches for one day; built-in catalog is mandatory fallback.
 - Analytics retries transient failures max 3 with 1s/2s/4s backoff; never block play.
 - Production deploy always requires explicit PM approval after preview verification.
@@ -136,4 +152,5 @@ Required in approved delivery:
 - `AGENTS.md`: developer SSOT; prune stale facts every change.
 - 2026-06-14: initial mobile destruction game design.
 - 2026-06 to 2026-07: 21+ weapons, juice, records, golden target, FEVER, share card; auto-demo removed.
-- 2026-07-16: gamification/character-variety direction approved; written spec pending PM review; implementation not started.
+- 2026-07-16: gamification/character-variety, progress, admin, and analytics implemented on feature branch; 464 Vitest and 97 pgTAP tests passed; not deployed.
+- 2026-07-16: player profile/cross-device sync design approved; implementation plans pending PM review.
