@@ -15,6 +15,7 @@ import {
   type ProgressTargetId,
 } from './progress/events'
 import { reduceProgress } from './progress/reducer'
+import { parseProgress } from './progress/validate'
 import type {
   CheckpointReason,
   ProgressLoadResult,
@@ -144,6 +145,22 @@ export class GameProgressCoordinator {
 
   get questCatalog(): QuestCatalogSnapshot {
     return this.catalog
+  }
+
+  /** Replaces an identity-scoped snapshot without producing persistence or side effects. */
+  replaceState(next: ProgressStateV1): boolean {
+    const parsed = parseProgress(
+      next,
+      [...this.knownWeaponIds],
+      [...this.knownMoveIds],
+      this.catalog,
+    )
+    if (!parsed.installSeed) return false
+    this.state = parsed
+    this.recentEventKeys.length = 0
+    this.recentEventSet.clear()
+    this.clearPendingDailyEvidence()
+    return true
   }
 
   /** Swaps validated remote data while retaining the already assigned same-day quest. */

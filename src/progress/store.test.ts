@@ -3,7 +3,13 @@ import { CHARACTER_IDS } from '../weapons/character-ids'
 import { createQuestDefinition, type QuestCatalogSnapshot } from './catalog'
 import { createDefaultProgress } from './defaults'
 import { reduceProgress } from './reducer'
-import { ProgressStore, PROGRESS_STORAGE_KEY, type CheckpointReason, type StorageAdapter } from './store'
+import {
+  ProgressStore,
+  PROGRESS_STORAGE_KEY,
+  progressStorageKey,
+  type CheckpointReason,
+  type StorageAdapter,
+} from './store'
 import { parseProgress } from './validate'
 
 const KNOWN_WEAPONS = ['hammer', 'fire', 'cinnamoroll', 'ditto', 'dragonball'] as const
@@ -413,6 +419,43 @@ describe('parseProgress', () => {
 })
 
 describe('ProgressStore load and migration', () => {
+  it('derives immutable guest and player storage keys from a UUID only', () => {
+    expect(progressStorageKey({ kind: 'guest' })).toBe('btw.progress.v1')
+    expect(progressStorageKey({
+      kind: 'player',
+      userId: '10000000-0000-0000-0000-000000000001',
+    })).toBe('btw.player.10000000-0000-0000-0000-000000000001.progress.v1')
+    expect(() => progressStorageKey({ kind: 'player', userId: '예진' })).toThrow()
+  })
+
+  it('starts a player cache at zero without reading or changing guest and legacy records', () => {
+    const userId = '10000000-0000-0000-0000-000000000001'
+    const playerKey = progressStorageKey({ kind: 'player', userId })
+    const guest = createDefaultProgress('guest-seed')
+    guest.lifetime.bestCombo = 88
+    const storage = new FakeStorage({
+      [PROGRESS_STORAGE_KEY]: JSON.stringify(guest),
+      'btw.bestCombo': '42',
+      'btw.totalTargets': '19',
+    })
+
+    const loaded = new ProgressStore(storage, {
+      ...options(),
+      storageKey: playerKey,
+      migrateLegacy: false,
+      createInstallSeed: () => 'player-seed',
+    }).load()
+
+    expect(loaded.state).toEqual(createDefaultProgress('player-seed'))
+    expect(storage.peek(playerKey)).not.toBeNull()
+    expect(JSON.parse(storage.peek(PROGRESS_STORAGE_KEY)!)).toEqual(guest)
+    expect(storage.peek('btw.bestCombo')).toBe('42')
+    expect(storage.peek('btw.totalTargets')).toBe('19')
+    expect(storage.operations).not.toContain(`get:${PROGRESS_STORAGE_KEY}`)
+    expect(storage.operations).not.toContain('get:btw.bestCombo')
+    expect(storage.operations).not.toContain('get:btw.totalTargets')
+  })
+
   it('does not reconnect a custom character quest with a non-character distinct credit', () => {
     const loaded = loadCustomCharacters(savedCustomCharacters())
 

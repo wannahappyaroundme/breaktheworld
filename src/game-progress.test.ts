@@ -96,6 +96,34 @@ function actionEvents(actionId = 1, targetRunId = 1): GameEvent[] {
 }
 
 describe('GameProgressCoordinator', () => {
+  it('replaces state without saving, tracking, notifying, or retaining dedupe evidence', () => {
+    const track = vi.fn()
+    const { progress, store, notify } = coordinator({ analytics: { track } })
+    const events = actionEvents().filter((event) => event.type !== 'COMBO_CHANGED')
+    progress.dispatch(events, 'targetDestroy')
+    store.saves.length = 0
+    track.mockClear()
+    notify.mockClear()
+    const replacement = createDefaultProgress('replacement-seed')
+    replacement.lifetime.bestCombo = 7
+
+    expect(progress.replaceState(replacement)).toBe(true)
+    expect(progress.state.installSeed).toBe('replacement-seed')
+    expect(progress.state.lifetime.bestCombo).toBe(7)
+    expect(store.saves).toHaveLength(0)
+    expect(track).not.toHaveBeenCalled()
+    expect(notify).not.toHaveBeenCalled()
+    expect(progress.dispatch(events).accepted).toBe(3)
+  })
+
+  it('rejects replacement state without an install seed', () => {
+    const { progress } = coordinator()
+    const before = progress.state
+
+    expect(progress.replaceState({} as ProgressStateV1)).toBe(false)
+    expect(progress.state).toBe(before)
+  })
+
   it('loads one KST daily challenge and checkpoints a destroy batch exactly once', () => {
     const { progress, store, notify } = coordinator()
 

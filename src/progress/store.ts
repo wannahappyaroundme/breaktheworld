@@ -1,3 +1,4 @@
+import { isUuid } from '../../supabase/functions/_shared/player-contract'
 import { createDefaultProgress } from './defaults'
 import type { ProgressStateV1 } from './types'
 import { parseProgress } from './validate'
@@ -22,10 +23,22 @@ export interface StorageAdapter {
 }
 
 export interface ProgressStoreOptions {
+  storageKey?: string
+  migrateLegacy?: boolean
   knownWeaponIds?: readonly string[]
   knownMoveIds?: readonly string[]
   createInstallSeed?: () => string
   onMemoryFallback?: () => void
+}
+
+export type ProgressScopeKey =
+  | { kind: 'guest' }
+  | { kind: 'player'; userId: string }
+
+export function progressStorageKey(scope: ProgressScopeKey): string {
+  if (scope.kind === 'guest') return PROGRESS_STORAGE_KEY
+  if (!isUuid(scope.userId)) throw new Error('invalid player user id')
+  return `btw.player.${scope.userId}.progress.v1`
 }
 
 export interface ProgressLoadResult {
@@ -52,6 +65,8 @@ export class ProgressStore {
   private readonly knownMoveIds: readonly string[]
   private readonly createInstallSeed: () => string
   private readonly onMemoryFallback?: () => void
+  private readonly storageKey: string
+  private readonly migrateLegacy: boolean
   private mode: ProgressStorageMode = 'persistent'
   private memoryState: ProgressStateV1 | null = null
   private fallbackNotified = false
@@ -64,6 +79,8 @@ export class ProgressStore {
     this.knownMoveIds = options.knownMoveIds ?? []
     this.createInstallSeed = options.createInstallSeed ?? defaultInstallSeed
     this.onMemoryFallback = options.onMemoryFallback
+    this.storageKey = options.storageKey ?? PROGRESS_STORAGE_KEY
+    this.migrateLegacy = options.migrateLegacy ?? (options.storageKey === undefined)
   }
 
   load(): ProgressLoadResult {
@@ -75,7 +92,7 @@ export class ProgressStore {
 
     let stored: string | null
     try {
-      stored = this.storage.getItem(PROGRESS_STORAGE_KEY)
+      stored = this.storage.getItem(this.storageKey)
     } catch {
       return this.enterMemory(this.newState())
     }
@@ -92,7 +109,7 @@ export class ProgressStore {
     }
 
     try {
-      this.storage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(state))
+      this.storage.setItem(this.storageKey, JSON.stringify(state))
       return { ok: true }
     } catch {
       this.enterMemory(state)
@@ -117,6 +134,8 @@ export class ProgressStore {
   }
 
   private loadNewOrLegacy(): ProgressLoadResult {
+    if (!this.migrateLegacy) return this.persistInitial(this.newState(), [])
+
     let bestRaw: string | null
     let totalRaw: string | null
     try {
@@ -143,7 +162,7 @@ export class ProgressStore {
 
   private persistInitial(state: ProgressStateV1, migratedKeys: readonly string[]): ProgressLoadResult {
     try {
-      this.storage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(state))
+      this.storage.setItem(this.storageKey, JSON.stringify(state))
     } catch {
       return this.enterMemory(state)
     }
