@@ -1,32 +1,30 @@
 import './style.css'
 
+import { AdminApi } from './api'
+import { AdminView } from './view'
+import { getSupabase } from '../services/supabase'
+
 const root = document.getElementById('admin-app')
 
 if (!root) throw new Error('Admin app root is missing')
 
-const loading = document.createElement('section')
-loading.className = 'admin-loading'
-loading.setAttribute('aria-labelledby', 'admin-loading-title')
-loading.setAttribute('aria-describedby', 'admin-loading-copy')
-loading.setAttribute('aria-busy', 'true')
+const supabase = getSupabase()
 
-const mark = document.createElement('div')
-mark.className = 'admin-loading__mark'
-mark.setAttribute('aria-hidden', 'true')
-mark.textContent = '💥'
-
-const title = document.createElement('h1')
-title.id = 'admin-loading-title'
-title.textContent = '세상 부수기 운영자'
-
-const copy = document.createElement('p')
-copy.id = 'admin-loading-copy'
-copy.textContent = '운영자 설정을 불러오는 중이에요.'
-
-const progress = document.createElement('div')
-progress.className = 'admin-loading__progress'
-progress.setAttribute('aria-hidden', 'true')
-progress.append(document.createElement('span'))
-
-loading.append(mark, title, copy, progress)
-root.replaceChildren(loading)
+if (!supabase) {
+  const card = document.createElement('section')
+  card.className = 'admin-auth-card'
+  const title = document.createElement('h1')
+  title.textContent = '연결 설정을 확인해 주세요.'
+  const copy = document.createElement('p')
+  copy.className = 'admin-lead'
+  copy.textContent = '연결 정보를 입력한 뒤 화면을 새로 열면 운영자 기능을 사용할 수 있어요.'
+  card.append(title, copy)
+  root.replaceChildren(card)
+} else {
+  const api = new AdminApi(supabase)
+  const view = new AdminView(root, api)
+  supabase.auth.onAuthStateChange((event) => {
+    if (event === 'SIGNED_OUT') view.renderSessionExpired()
+  })
+  void view.start()
+}

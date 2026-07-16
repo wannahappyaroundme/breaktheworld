@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(91);
+select plan(97);
 
 select has_type('public', 'quest_event_type', 'quest event enum exists');
 select has_type('public', 'analytics_event_type', 'analytics event enum exists');
@@ -119,6 +119,12 @@ select ok(not has_table_privilege('authenticated', 'public.analytics_events', 'i
 select ok(not has_table_privilege('authenticated', 'public.admin_users', 'insert'), 'browser roles cannot insert admin accounts');
 select ok(not has_table_privilege('authenticated', 'public.admin_users', 'update'), 'browser roles cannot update admin accounts');
 select ok(not has_table_privilege('authenticated', 'public.admin_users', 'delete'), 'browser roles cannot delete admin accounts');
+select ok(has_table_privilege('service_role', 'public.admin_users', 'select'), 'admin function can list registered accounts');
+select ok(not has_table_privilege('service_role', 'public.admin_users', 'update'), 'admin function has no table-wide account update grant');
+select ok(has_column_privilege('service_role', 'public.admin_users', 'active', 'update'), 'admin function can change account status only');
+select ok(not has_column_privilege('service_role', 'public.admin_users', 'role', 'update'), 'admin function cannot change account roles');
+select ok(not has_table_privilege('service_role', 'public.admin_users', 'insert'), 'admin function cannot create account records');
+select ok(not has_table_privilege('service_role', 'public.admin_users', 'delete'), 'admin function cannot delete account records');
 select ok(not has_table_privilege('anon', 'public.analytics_rate_limits', 'select'), 'anon cannot inspect rate limits');
 select ok(not has_table_privilege('authenticated', 'public.analytics_rate_limits', 'select'), 'authenticated users cannot inspect rate limits');
 select ok(

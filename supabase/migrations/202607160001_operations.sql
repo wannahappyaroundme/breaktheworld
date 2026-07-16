@@ -151,6 +151,8 @@ revoke all on type public.quest_event_type from public, anon, authenticated;
 revoke all on type public.analytics_event_type from public, anon, authenticated;
 
 grant select on table public.admin_users to authenticated;
+grant select on table public.admin_users to service_role;
+grant update(active) on table public.admin_users to service_role;
 grant select on table public.quest_catalog to anon;
 grant select, insert, update, delete on table public.quest_catalog to authenticated;
 grant select on table public.feature_flags to anon;
