@@ -1,49 +1,84 @@
 # 💥 세상 부수기 (Break The World)
 
-폰에서 손가락으로 **세상을 와장창 부수며 스트레스를 푸는** 모바일 전용 웹게임.
-21가지 파괴 방식(망치·운석·폭발 ~ 타노스·시나모롤·곰돌이푸)으로 지구·도시·"세상"을 통쾌하게!
+폰에서 손가락으로 세상을 와장창 부수며 스트레스를 푸는 모바일 웹게임입니다. 회원가입 없이 바로 시작할 수 있고, 프로필을 만들면 여러 기기에서 기록을 이어갈 수 있습니다.
 
-플래시게임 두들 감성 · 손맛 나는 파편·폭발·화면진동 · Web Audio 효과음.
+## 운영 주소
 
-## 🎮 기능
-- **타겟 3종 자동 순환**: 지구 → 도시 → "세상" 글자 (부서지면 다음으로)
-- **파괴기 21종**
-  - 물리·원소 12: 🔨망치 👊주먹 🧊유리 🔪레이저 ☄️운석 🚀미사일 💣대폭발 ⚡번개 🔥화염 🌪️토네이도 ❄️빙결 🕳️블랙홀
-  - 캐릭터 9: ☁️시나모롤 🫰타노스 🦾아이언맨 🟢헐크 🦖고질라 🐉드래곤볼 🐱고양이 🟣메타몽 🍯곰돌이푸
-- 탭/쓸기/멀티터치, 콤보 카운터, 🔇 사운드 토글, 다음/리셋, PWA(홈 화면 추가)
+- 게임: [세상 부수기](https://wannahappyaroundme.github.io/breaktheworld/)
+- 운영자 화면: [운영자 설정](https://wannahappyaroundme.github.io/breaktheworld/admin.html)
 
-## 🛠 개발
+## 게임 이용 방법
+
+1. 처음에는 게스트로 바로 플레이합니다.
+2. `📖 기록책`에서 오늘의 도전, 부순 기록, 캐릭터 모습과 설정을 확인합니다.
+3. 여러 기기에서 기록을 이어가려면 기록책의 프로필 카드를 누릅니다.
+4. 새 프로필을 만들 때 프로필 ID 중복을 확인하고 숫자 6자리 PIN을 두 번 입력합니다.
+5. 다른 기기에서는 같은 프로필 ID와 PIN으로 로그인합니다. 프로필 화면에서 로그아웃할 수 있습니다.
+
+프로필 ID는 한글, 영문, 숫자로 2자에서 12자까지 사용할 수 있으며 중복될 수 없습니다. 새 프로필은 기록 0부터 시작합니다. 게스트 기록은 현재 기기에 그대로 남고 새 프로필로 옮겨지지 않습니다.
+
+## 주요 기능
+
+- 세상 글자, 지구, 도시가 차례로 등장하는 타겟 3종
+- 망치부터 시나모롤, 타노스, 메타몽까지 파괴 방식 21종
+- 짧게 탭, 쓸기, 길게 누른 뒤 놓는 강타, 여러 손가락 입력
+- 캐릭터별 세 가지 움직임과 시나모롤·메타몽 클래식 모습
+- 연속 기록, FEVER, 황금 타겟, 소리, 진동, 기록 카드 공유
+- 하루 한 번 도전, 영구 도장 5종, 기록책과 알림
+- 게스트 즉시 플레이, 선택형 프로필 로그인, 여러 기기 기록 동기화, 로그아웃
+- 홈 화면에 추가할 수 있는 PWA
+
+## 운영자 화면
+
+승인된 운영자 이메일과 비밀번호로 로그인합니다. 운영자 화면에서 다음 항목을 관리할 수 있습니다.
+
+- 오늘의 도전 추가·수정·기간 설정
+- 게임 기능 켜기·끄기
+- 날짜별 이용 통계와 캐릭터·강타 사용 현황
+- 운영자 계정 추가·활성화·비활성화
+- 플레이어 프로필 확인, 로그인 잠시 멈추기, 숫자 6자리 임시 PIN 재설정, 삭제
+
+임시 PIN을 재설정하면 해당 프로필은 모든 기기에서 다시 로그인해야 합니다. PIN이나 비밀번호는 저장소 문서에 기록하지 않습니다.
+
+## 개발과 확인
+
 ```bash
 npm install
-npm run dev        # http://localhost:5173
-npm run build      # 타입체크 + 프로덕션 빌드 (dist/)
-npm test           # 로직 단위 테스트
+npm run dev
+npm run lint:copy
+npm test
+npm run typecheck
+npm run build
+npm audit --omit=dev --audit-level=high
 ```
-- 데모 자동시연: `?demo` 또는 `?demo=thanos` (무기 지정)
-- 아트 프리뷰: `/preview.html`
 
-## 🎨 이미지(아트) 넣기 — 자동 적용
-캐릭터/타겟을 직접 만든 이미지로 바꾸려면 **[ASSETS.md](./ASSETS.md)** 의 프롬프트로 만들어
-`public/assets/`에 정해진 파일명(투명 PNG)으로 넣기만 하면 **자동 교체**됩니다.
-(이미지가 없으면 내장 두들 아트로 폴백)
+- 로컬 게임: `http://localhost:5173`
+- 데모: `?demo` 또는 `?demo=thanos`
+- 아트 미리보기: `/preview.html`
+- 현재 운영 검증: Vitest 685개, 운영 빌드, 문구 검사, 타입 검사, 운영 의존성 보안 취약점 0건
 
-## 🚀 배포 (GitHub Pages)
-1. 이 저장소를 GitHub에 푸시 (저장소 이름: `breaktheworld` 권장)
-2. **Settings → Pages → Build and deployment → Source: GitHub Actions**
-3. `main` 에 push 하면 [.github/workflows/deploy.yml](.github/workflows/deploy.yml) 가 자동 빌드·배포
-4. 결과 URL: `https://<your-id>.github.io/breaktheworld/`
+## 배포
 
-### ⚠️ 배포 전 2곳 확인
-- 저장소 이름이 `breaktheworld`가 아니면 [vite.config.ts](./vite.config.ts) 의 `base`를 `/<저장소이름>/` 로 변경
-- [index.html](./index.html) 의 OG 메타 `your-id` 를 본인 GitHub 아이디로 변경 (공유 썸네일용 절대 URL)
+정적 게임과 운영자 화면은 GitHub Pages, 로그인·데이터·동기화는 Supabase를 사용합니다. 운영 배포는 GitHub Actions의 `Deploy to GitHub Pages` 작업을 수동 실행하며, 프리뷰 확인과 운영 배포 승인 후 진행합니다.
 
-## 🧩 기술 스택
-Vite · TypeScript · HTML5 Canvas 2D · rough.js(손그림 렌더) · Web Audio API · Vitest · GitHub Actions
+배포할 때 필요한 공개 설정은 GitHub Actions Secrets에서 관리합니다. Supabase 서비스 역할 키, 운영자 비밀번호, 플레이어 PIN은 브라우저 번들이나 저장소에 넣지 않습니다.
 
-## 📐 구조
-- `src/engine/` 루프·렌더·입력·카메라·파티클·오디오
-- `src/effects/` 폭발·균열·충격파·빔·발사체·번개·블랙홀·토네이도(공용 이펙트 툴킷)
-- `src/targets/` 부서지는 타겟 + shatter 기하 + 순환 매니저
-- `src/weapons/` 21종 무기(이펙트 조합 레시피) + 무기 바
-- `src/art/` 두들 아트 + 드롭인 이미지 로더
-- `src/ui/` HUD(콤보·사운드·리셋/다음)
+## 이미지 교체
+
+캐릭터나 타겟을 직접 만든 이미지로 바꾸려면 [ASSETS.md](./ASSETS.md)의 안내에 따라 투명 PNG를 `public/assets/`에 넣습니다. 이미지가 없으면 내장 두들 아트를 사용합니다.
+
+## 기술 구성
+
+Vite 5, TypeScript, Canvas 2D, rough.js, Web Audio, Vitest, GitHub Actions, GitHub Pages, Supabase Auth·Postgres·Edge Functions를 사용합니다.
+
+```text
+src/engine/     입력, 화면, 카메라, 파티클, 오디오
+src/effects/    폭발, 균열, 충격파 등 공용 효과
+src/targets/    부서지는 타겟과 순환
+src/weapons/    파괴 방식 21종
+src/progress/   기록, 도전, 도장, 저장
+src/player/     프로필, 로그인, 동기화, 로그아웃
+src/admin/      운영자 화면
+src/ui/         게임 화면, 기록책, 알림, 공유
+supabase/       DB 변경, 서버 함수, DB 테스트
+```

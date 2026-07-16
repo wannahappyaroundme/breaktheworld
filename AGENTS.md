@@ -2,155 +2,154 @@
 
 ## Status
 
-- Date: 2026-07-16
-- Branch: `codex/gamification-upgrade`
-- Product: personal, non-commercial, mobile-only stress-relief web game.
-- Gamification, character variety, progress, analytics, and operator UI are implemented and locally verified on this branch; they are not merged or deployed.
-- Player profile/sync design is approved: `docs/superpowers/specs/2026-07-16-player-profile-sync-design.md`.
-- Next gate: PM reviews 3 player-profile implementation plans. Never code before plan approval.
+- Date: 2026-07-17
+- Branch: `main`
+- Production: `https://wannahappyaroundme.github.io/breaktheworld/`
+- Admin: `https://wannahappyaroundme.github.io/breaktheworld/admin.html`
+- Backend: Supabase project `breaktheworld`, ref `ohvkunouhcxbnfjhhuih`, Seoul region.
+- Release state: gamification, character variants, analytics, guest-first player profiles, cross-device sync, and operator player management are merged and deployed.
+- All 6 production feature flags are enabled. One active owner exists; credentials are never documented.
+- Next product gate: future My Page, achievement titles, and achievement avatar rewards require a new approved design and plan before code.
 
 ## Product
 
-Target: phone users who want immediate, cute, non-gory destruction. Core promise: tap/drag/hold to break the world with strong audiovisual feedback. Guest play remains immediate; optional player profiles are planned for cross-device sync.
+Personal, non-commercial, mobile-first stress-relief web game. Target users want immediate, cute, non-gory destruction with strong audiovisual feedback. Guest play is instant. Optional profiles provide persistent multi-device progress.
 
 ### Implemented
 
-- Targets: word `세상` → earth → city loop, sky drop-in.
-- Weapons: 12 elemental/physical + 9 characters; legacy Cinnamoroll/Ditto appearances are classic skins, registry exposes 21 entries.
-- Tap/drag/charge input state machine, per-character partial moves/signatures, bounded seeded variation, max-3-action finish invariant.
+- Targets: word `세상` -> earth -> city loop with sky drop-in.
+- Registry: 12 elemental/physical weapons + 9 characters = 21 entries. Legacy Cinnamoroll/Ditto appearances are classic skins.
+- Input state machine: tap, drag, hold/charge, release-to-fire, cancellation safety, and double-tap strong-attack accessibility option.
+- Character partial moves/signatures, bounded seeded variation, and max-3-valid-action finish invariant.
 - Combo/best combo, FEVER, golden targets, haptics, share card, what's-new modal, PWA.
 - Versioned `btw.progress.v1`, legacy migration, one daily quest, 5 permanent stamps, record-book sheet, queued notifications.
-- Supabase admin auth, quest CRUD/scheduling, feature flags, enum-only anonymous analytics, static/local fallback.
-- Operator dashboard includes admin account management, quest/flag operations, and daily metrics.
-
-### Approved, not implemented
-
-- Guest-first optional player profiles: globally unique 2-12 char Hangul/ASCII/digit ID and exact 6-digit numeric PIN.
-- Explicit duplicate check plus DB UNIQUE; ASCII case-insensitive ID comparison.
-- New profiles start at zero; guest state stays device-local and is never imported.
-- Persistent multi-device sessions, local logout, admin PIN reset with global session invalidation.
-- Idempotent operation sync for all progress/settings; offline outbox and server projection.
-- Record-book profile card/full-screen profile; default circle avatar; future My Page extension point.
+- Guest-first profiles: globally unique 2-12 Hangul/ASCII/digit ID, ASCII case-insensitive comparison, explicit duplicate check, exact 6-digit numeric PIN.
+- New profiles start at zero. Guest progress stays device-local and is never imported.
+- Persistent login, logout, multi-device operation sync, offline outbox, and server projection.
+- Supabase admin auth, quest CRUD/scheduling, feature flags, enum-only analytics, and static/local fallbacks.
+- Operator dashboard: admin accounts, quests, flags, daily metrics, player list, PIN reset, deactivate/reactivate, hard delete.
 
 ### Explicit non-goals
 
-Leaderboards, PvP, XP/levels, currency/store/energy, punitive streaks, new characters/targets, native app, monetization/public marketing rights work. Player email/phone, social login, guest-record import, public profiles, and full My Page remain out of the current profile increment.
+Leaderboards, PvP, XP/levels, currency/store/energy, punitive streaks, new characters/targets, native app, monetization, player email/phone, social login, guest-record import, public profiles, and a full My Page are outside the deployed release.
 
 ## Architecture
 
-Stack is fixed: Vite 5, TypeScript, Canvas 2D, rough.js, Web Audio, Vitest, GitHub Pages. Keep stack; no framework migration.
+Stack is fixed: Vite 5, TypeScript, Canvas 2D, rough.js, Web Audio, Vitest, GitHub Pages, Supabase Auth/Postgres/Edge Functions. No framework migration.
 
 ```text
-Input → ActionController → Weapon/CharacterMoveSet → DamageResult → GameEventBus
-  → Combo/FEVER | ProgressStore | Quest/Achievement reducers | NotificationQueue | AnalyticsClient
+Input -> ActionController -> Weapon/CharacterMoveSet -> DamageResult -> GameEventBus
+  -> Combo/FEVER | ProgressStore | Quest/Achievement reducers | NotificationQueue | AnalyticsClient
+
+GameEvent/setting change -> local ProgressStore -> authenticated Outbox
+  -> player-sync Edge Function -> idempotent operation ledger -> server projection
+
+Profile UI -> player-auth Edge Function -> Supabase Auth session
+Admin UI -> Supabase Auth -> RLS/management Edge Functions
 ```
 
 Rules:
 
-- `Input` owns gesture interpretation only.
-- `ActionController` owns tap/drag/charge lifecycle and single active cinematic.
-- Async impacts must match `actionId + targetRunId`; stale visuals may draw but cannot damage or progress.
-- `Weapon.apply` replacement must return actual damage result; progress counts only detached fragments >0.
-- Demo/system events never progress quests/achievements.
-- Character tap damage: 35-50% of initial fragment count; charge: 55-80%; remaining <=20% or third valid action finishes.
-- Event store accepts enums/counts/IDs only; never raw pointer coordinates, user content, prompts, or PII.
-- Save only on action end, destroy, unlock, setting change, pagehide; never per frame/tick.
-- If local/remote storage fails, gameplay continues with in-memory/static fallback.
-- Notification priority: record > achievement > quest > general; one visible at a time.
+- `Input` owns gesture interpretation only; `ActionController` owns action lifecycle and one active cinematic.
+- Async impacts must match `actionId + targetRunId`; stale visuals cannot damage or progress.
+- Progress counts only detached fragments >0. Demo/system events never progress quests or achievements.
+- Same seed produces the same bounded variation; no tap move repeats three times consecutively.
+- Save on action end, destroy, unlock, setting change, and pagehide, never per frame.
+- Player sync is operation-based and idempotent by device/sequence/operation ID. Server writes never trust a browser-owned final snapshot.
+- Local, remote-config, analytics, or sync failures cannot block gameplay. Guest/local fallback remains available.
+- Event/telemetry storage accepts enums, counts, and IDs only, never raw coordinates, user content, PINs, or PII.
+- Notification priority: record > achievement > quest > general; one visible notification at a time.
 
 ## Folder Map
 
 ```text
-src/main.ts                 boot
+src/main.ts                 boot, profile/sync wiring
 src/game.ts                 game orchestration
 src/engine/                 loop, renderer, input, camera, particles, audio, math/rng
-src/effects/                effect manager + primitives
-src/targets/                target interface, breakable, target types, manager
-src/weapons/                weapon contracts, registry, elemental, characters, bar
-src/art/                    canvas/doodle art + optional PNG assets
-src/progress/               local progress state, reducer, catalog, validation, store
+src/effects/                effect manager and primitives
+src/targets/                target contracts, breakables, target manager
+src/weapons/                weapon contracts, registry, elemental and character moves
+src/art/                    canvas/doodle art and optional PNG assets
+src/progress/               local state, reducers, catalog, validation, store
 src/combat/                 action state and resolved attack contracts
 src/analytics/              privacy-limited event mapping and transport
+src/player/                 profile UI/API, privacy, auth, outbox, sync client/store
 src/admin/                  operator application, API, view, styles
 src/ui/                     HUD, record book, notifications, what's new, share card
-supabase/                   migrations, Edge Functions, pgTAP tests, seed
+supabase/migrations/        four deployed SQL migrations
+supabase/functions/         five deployed Edge Functions plus shared handlers
+supabase/tests/             pgTAP security/data tests
 docs/superpowers/specs/     approved product/design specs
-docs/superpowers/plans/     implementation plans
+docs/superpowers/plans/     approved implementation plans
 public/                     PWA icons, OG image, optional assets
-dist/                       generated build; do not hand-edit
+dist/                       generated build; never hand-edit
 ```
 
-New profile module paths and interfaces are locked in approved implementation plans, not this SSOT.
+## Data and Security
 
-## Data
+### Local
 
-### Local implemented schema
+- `btw.progress.v1`: schema/catalog version, install seed, counters, weapon/target history, achievements, daily quest, selected title/skins, input/motion/haptics settings.
+- Guest state is device-local. Authenticated operations enter an offline outbox and retry without blocking play.
 
-`btw.progress.v1`: schema/catalog version, install seed, lifetime counters, by-weapon uses/finishes/seen moves, by-target destroys, achievements, one daily quest, selected title/skins/input/motion/haptics settings.
+### Supabase
 
-### Supabase implemented schema
+- Operations: `admin_users`, `quest_catalog`, `feature_flags`, `analytics_events`, `analytics_rate_limits`, `analytics_daily` view.
+- Player auth: `player_profiles`, `player_auth_aliases`, `player_auth_rate_limits`, `admin_audit_logs`.
+- Player sync: `player_progress`, `player_devices`, `player_sync_operations`, `player_daily_assignments`, `player_daily_completions`, `player_sync_rate_limits`.
+- Four migrations are deployed: operations, player auth, player sync, authenticated feature flags.
+- Five active Edge Functions: `ingest-analytics`, `manage-admin`, `manage-player`, `player-auth`, `player-sync`.
+- Hourly cron cleanup runs for player auth and sync rate-limit buckets.
 
-- `admin_users(user_id, role, active)`
-- `quest_catalog(id, copy, event_type, target, active_from, active_to, enabled, version)`
-- `feature_flags(key, enabled, updated_at)`
-- `analytics_events(event_type, day_key, install_hash, weapon_id, value, created_at)`
-- `analytics_daily(day_key, event_type, weapon_id, count)`
-
-RLS centrally checks `admin_users`. Browser gets anon key only. Service-role key stays server-side. Anonymous writes go through a validating/rate-limited Edge Function. Admin errors must not reveal whether an account exists.
-
-### Supabase player profile schema, approved not implemented
-
-- `player_profiles`, `player_auth_aliases`, `player_progress`
-- `player_devices`, `player_sync_operations`
-- `player_auth_rate_limits`, `admin_audit_logs`
-
-Player browser writes are forbidden. Player Auth/Sync Edge Functions validate publishable or user JWT requests; custom access-token claims carry `credential_version`. Sync uses UUID ownership, device sequence, operation ID, and transactional projection.
+RLS centrally checks `admin_users`. The browser receives only the Supabase URL and publishable key. The service-role key and custom peppers remain server-side. PINs are handled through Supabase Auth and are never stored or logged raw. Synthetic internal auth aliases are never returned to the UI. PIN reset increments `credential_version`, revokes sessions, and forces a change on next login. Anonymous endpoints validate origin/body and apply rate limits; authenticated writes verify JWT ownership.
 
 ## Admin
 
-Implemented on branch:
+- Email/password login and local logout.
+- Admin account list/add/activate/deactivate with owner-only authorization.
+- Quest CRUD, scheduling, and game/character/analytics toggles.
+- Daily funnel, character, and hold metrics without player content or raw PII.
+- Player profile list/status, exact 6-digit temporary PIN reset, global session invalidation, deactivate/reactivate, hard delete.
+- Section failures are isolated so one failed backend call does not hide unrelated controls.
 
-- ID/PW login
-- admin account list/activate/deactivate
-- quest CRUD and scheduling
-- feature toggles: gamification, character variants, analytics
-- daily funnel and character/hold metrics
-- no player content or raw PII
+## Hosting and Deployment
 
-Approved next increment: player list/status, temporary 6-digit PIN reset, global session invalidation, force-change state, deactivate, hard delete.
-
-## Hosting / APIs
-
-- Game/admin static bundle: GitHub Pages via `.github/workflows/deploy.yml`.
-- Backend: Supabase Auth/Postgres/Edge Functions; player Auth/Sync functions are planned.
+- Static game/admin: GitHub Pages via manual `.github/workflows/deploy.yml` dispatch from `main`.
+- Backend: linked Supabase project in Seoul; migrations/functions deploy independently before Pages activation.
+- GitHub Actions Secrets supply `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_PLAYER_DELETION_CONTACT`, and `VITE_PLAYER_PROCESSING_NOTICE`.
 - Remote quest config caches for one day; built-in catalog is mandatory fallback.
-- Analytics retries transient failures max 3 with 1s/2s/4s backoff; never block play.
-- Production deploy always requires explicit PM approval after preview verification.
+- Analytics and sync retry transient failures up to 3 times with 1s/2s/4s backoff and never block play.
+- Production requires preview signoff and explicit PM approval. Roll back Pages to the previous deployment and close feature flags before a backend rollback.
 
-## UI / Copy
+## UI and Copy
 
-- Mobile portrait first; center target remains dominant.
-- Replace top `✨` with accessible `📖 기록책`; add no new top buttons.
-- Minimum interactive target 44px, real buttons, Korean accessible names, visible focus.
-- Big full-screen effects only for FEVER, record, max-charge signature.
-- Korean easy words: `연속`, `오늘의 도전`, `부순 기록`, `도장`, `캐릭터 모습`.
-- No em dash in rendered copy. No punitive/negative framing. Add copy lint to CI.
-- Respect reduced motion; offer double-tap strong attack alternative; sound/haptics cannot be sole signal.
+- Mobile portrait first; target remains visually dominant.
+- `📖 기록책` is the single top entry for progress, profile, skins, and settings.
+- Minimum interactive target 44px, semantic buttons, Korean accessible names, visible focus.
+- Full-screen effects are reserved for FEVER, records, and max-charge signatures.
+- Rendered Korean uses easy words and positive next actions. No em dash. Copy lint enforces forbidden terms and punctuation.
+- Reduced motion and double-tap strong attack are supported; sound/haptics are never the only feedback.
 
-## Quality Gates
+## Release Evidence
 
-- TDD for input boundaries, action state, damage profiles, RNG invariants, progress reducer/migration, daily boundary, RLS/admin.
-- Property/golden tests: same seed same result; no 3 identical moves; every character/target finishes <=3 valid actions; 1 fragment never stalls; destroy/progress exactly once.
-- Runtime: all 21 weapons tap/drag/charge at 390x844; real iOS Safari + Android Chrome.
-- Worst character + FEVER respects particle/effect budget; 50 repeated cinematics return active effects/memory to baseline.
-- `npm test`, `npm run build`, `tsc --noEmit`; preview URL play test; actual admin CRUD/fallback test.
-- Before prod: env diff, migration order/rollback, flags, preview signoff. Post-deploy hit real URL and observe errors/latency.
+- GitHub Actions production run `29509957681` deployed commit `b23e11a` from `main` on 2026-07-17 KST.
+- CI passed copy lint, 685 Vitest tests across 47 files, TypeScript check, production build, and `npm audit --omit=dev --audit-level=high` with 0 vulnerabilities.
+- Local pgTAP suite passed 234 tests before backend deploy. Remote DB lint reported 0 errors.
+- Production game, admin HTML, game/admin/Supabase bundles returned HTTP 200. Initial sampled responses were 0.25-0.31s.
+- Production browser confirmed game, record book, guest profile card, unique-ID check, profile-create form, and admin login form. Game/admin browser logs were empty.
+- Supabase production verification: 4 migrations, 5 active functions, 6 enabled flags, active owner, duplicate-check endpoint response, and no observed 5xx.
 
-## Docs / Version History
+Required future release gates: fresh tests/build/audit, migration and flag diff, preview signoff, real iOS Safari and Android Chrome smoke, production approval, live URL checks, and post-deploy observation.
 
-- `README.md`: PM-facing Korean service guide. Update only after feature is implemented, merged, and deployed.
-- `AGENTS.md`: developer SSOT; prune stale facts every change.
-- 2026-06-14: initial mobile destruction game design.
-- 2026-06 to 2026-07: 21+ weapons, juice, records, golden target, FEVER, share card; auto-demo removed.
-- 2026-07-16: gamification/character-variety, progress, admin, and analytics implemented on feature branch; 464 Vitest and 97 pgTAP tests passed; not deployed.
-- 2026-07-16: player profile/cross-device sync design approved; implementation plans pending PM review.
+## Version History
+
+- 2026-06-14: initial mobile destruction game.
+- 2026-06 to 2026-07: 21 weapons/characters, feedback effects, records, golden target, FEVER, and share card.
+- 2026-07-16: gamification, character variety, progress, operator dashboard, analytics, and player profile/sync designs approved and implemented.
+- 2026-07-17: Supabase operations/auth/sync backend and GitHub Pages frontend deployed to production; all release flags enabled.
+
+## Documentation Rule
+
+- `README.md` is Korean PM-facing service documentation.
+- `AGENTS.md` is the developer SSOT and must stay dense, current, and secret-free.
+- Update both only after a feature is implemented, merged, and deployed.
