@@ -63,15 +63,17 @@ async function body(response: Response) {
 }
 
 describe('manage-admin handler', () => {
-  it('keeps email signup closed and JWT verification enabled in local function config', async () => {
+  it('keeps public signup closed without disabling existing email login', async () => {
     const { readFileSync } = await vi.importActual<{
       readFileSync(path: URL, encoding: 'utf8'): string
     }>('node:fs')
     const config = readFileSync(new URL('../../supabase/config.toml', import.meta.url), 'utf8')
+    const authSection = config.split('[auth]')[1]?.split(/^\[/m)[0] ?? ''
     const emailSection = config.split('[auth.email]')[1]?.split(/^\[/m)[0] ?? ''
     const functionSection = config.split('[functions.manage-admin]')[1]?.split(/^\[/m)[0] ?? ''
 
-    expect(emailSection).toMatch(/^enable_signup = false$/m)
+    expect(authSection).toMatch(/^enable_signup = false$/m)
+    expect(emailSection).toMatch(/^enable_signup = true$/m)
     expect(functionSection).toMatch(/^verify_jwt = true$/m)
   })
 
