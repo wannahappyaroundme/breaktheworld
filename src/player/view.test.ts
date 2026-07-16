@@ -167,6 +167,7 @@ function setup(
     onGuestChosen?: () => void
     onAuthenticated?: () => void
     onLoggedOut?: () => void
+    onClosed?: () => void
   } = {},
 ) {
   const doc = new FakeDocument()
@@ -229,6 +230,7 @@ function setup(
     onGuestChosen: options.onGuestChosen,
     onAuthenticated: options.onAuthenticated,
     onLoggedOut: options.onLoggedOut,
+    onClosed: options.onClosed,
   })
   view.render(snapshot)
   return { doc, ui, recordBook, controller, view, history, fakeWindow }
@@ -284,7 +286,8 @@ describe('PlayerProfileView', () => {
   })
 
   it('keeps the ordinary record-book profile screen closable and unchanged', () => {
-    const { ui, view } = setup()
+    const onClosed = vi.fn()
+    const { ui, view } = setup(guest(), { onClosed })
 
     view.open(null)
 
@@ -293,6 +296,7 @@ describe('PlayerProfileView', () => {
     expect(action(ui, 'close').hidden).toBe(false)
     action(ui, 'close').click()
     expect(view.isOpen).toBe(false)
+    expect(onClosed).toHaveBeenCalledOnce()
   })
 
   it('closes required entry after login and reports authentication', async () => {

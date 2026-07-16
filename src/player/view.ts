@@ -26,6 +26,7 @@ export interface PlayerProfileViewOptions {
   onGuestChosen?: () => void
   onAuthenticated?: () => void
   onLoggedOut?: () => void
+  onClosed?: () => void
 }
 
 interface InertState {
@@ -66,6 +67,7 @@ export class PlayerProfileView {
   private readonly onGuestChosen?: PlayerProfileViewOptions['onGuestChosen']
   private readonly onAuthenticated?: PlayerProfileViewOptions['onAuthenticated']
   private readonly onLoggedOut?: PlayerProfileViewOptions['onLoggedOut']
+  private readonly onClosed?: PlayerProfileViewOptions['onClosed']
   private snapshot: PlayerAccountSnapshot
   private screen: ProfileScreen = 'guest'
   private openState = false
@@ -94,6 +96,7 @@ export class PlayerProfileView {
     this.onGuestChosen = options.onGuestChosen
     this.onAuthenticated = options.onAuthenticated
     this.onLoggedOut = options.onLoggedOut
+    this.onClosed = options.onClosed
 
     this.layer = this.doc.createElement('div')
     this.layer.className = 'player-profile-layer'
@@ -743,6 +746,7 @@ export class PlayerProfileView {
     const target = this.returnFocus?.isConnected ? this.returnFocus : fallback
     target?.focus()
     this.returnFocus = null
+    this.onClosed?.()
   }
 
   private readonly onPopState = (): void => {

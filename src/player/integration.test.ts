@@ -177,6 +177,8 @@ describe('guest-first player integration', () => {
     expect(source).toContain("profileView.openRequired('checking')")
     expect(source).toContain('decidePlayerEntry(')
     expect(source).toContain('game.maybeShowWhatsNewOnLoad()')
+    expect(source).toContain('onClosed: () =>')
+    expect(source).toContain('profileView?.isOpen')
     expect(source.indexOf('controller.start()')).toBeLessThan(source.indexOf('decidePlayerEntry('))
   })
 

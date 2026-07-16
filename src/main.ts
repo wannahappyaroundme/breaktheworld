@@ -138,9 +138,11 @@ preloadAssets(import.meta.env.BASE_URL).finally(() => {
     },
     beforeLogout: () => activeSync?.flush(5_000) ?? Promise.resolve(0),
   })
+  let startupReady = false
   let startupSettled = false
   const finishStartup = () => {
-    if (startupSettled) return
+    startupReady = true
+    if (startupSettled || profileView?.isOpen) return
     startupSettled = true
     game.maybeShowWhatsNewOnLoad()
   }
@@ -156,6 +158,9 @@ preloadAssets(import.meta.env.BASE_URL).finally(() => {
     },
     onLoggedOut: () => {
       entryChoice.clear()
+    },
+    onClosed: () => {
+      if (startupReady) finishStartup()
     },
   })
   if (!guestRememberedAtBoot) profileView.openRequired('checking')
