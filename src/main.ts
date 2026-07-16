@@ -1,28 +1,58 @@
 import './style.css'
 import { Game } from './game'
 import { preloadAssets } from './art/assets'
-import { getSupabase } from './services/supabase'
+import {
+  clearPlayerSupabaseSession,
+  getPlayerSupabase,
+  getPublicSupabase,
+} from './services/supabase'
 import {
   RemoteQuestConfigProvider,
   createSupabaseRemoteConfigReader,
 } from './config/quest-provider'
+import { PlayerApi } from './player/api'
+import { PlayerAccountController } from './player/controller'
+import { PlayerProfileView } from './player/view'
 
 const canvas = document.getElementById('stage') as HTMLCanvasElement
 const ui = document.getElementById('ui') as HTMLElement
 
 // Load any drop-in PNGs from public/assets/ first; start regardless of result.
 preloadAssets(import.meta.env.BASE_URL).finally(() => {
-  const game = new Game(canvas, ui)
-  let client: ReturnType<typeof getSupabase> = null
+  let profileView: PlayerProfileView | null = null
+  let controller: PlayerAccountController | null = null
+  const game = new Game(canvas, ui, {
+    onOpenProfile: (trigger) => profileView?.open(trigger),
+    onFeatureFlags: (flags) => controller?.setFeatureFlags(flags),
+  })
+  let publicClient: ReturnType<typeof getPublicSupabase> = null
+  let playerClient: ReturnType<typeof getPlayerSupabase> = null
   try {
-    client = getSupabase()
+    publicClient = getPublicSupabase()
   } catch {
-    // A malformed or blocked optional remote client must not interrupt local play.
+    // Optional remote config and analytics stay offline without interrupting play.
   }
-  void game.connectAnalytics(client)
+  try {
+    playerClient = getPlayerSupabase()
+  } catch {
+    // Player login stays offline while guest play continues.
+  }
+  const playerApi = new PlayerApi(playerClient, clearPlayerSupabaseSession)
+  controller = new PlayerAccountController({
+    api: playerApi,
+    onSnapshot: (snapshot) => {
+      game.setPlayerAccount(snapshot)
+      profileView?.render(snapshot)
+    },
+    onScope: (scope, generation) => game.setProgressScope(scope, generation),
+  })
+  profileView = new PlayerProfileView(ui, controller)
+  void controller.start()
+
+  void game.connectAnalytics(publicClient)
   const provider = new RemoteQuestConfigProvider({
-    reader: client
-      ? createSupabaseRemoteConfigReader(client)
+    reader: publicClient
+      ? createSupabaseRemoteConfigReader(publicClient)
       : null,
     storage: {
       getItem: (key) => window.localStorage.getItem(key),

@@ -31,11 +31,17 @@ import {
   createLazyStorageAdapter,
   createMemoryFallbackHandler,
   progressTargetId,
+  type ProgressPersistence,
 } from './game-progress'
 import { BUILT_IN_CATALOG } from './progress/catalog'
 import { kstDayKey } from './progress/day'
 import type { EventSource, GameEvent } from './progress/events'
-import { ProgressStore, type CheckpointReason } from './progress/store'
+import {
+  ProgressStore,
+  progressStorageKey,
+  type CheckpointReason,
+  type StorageAdapter,
+} from './progress/store'
 import { makeRecordBookView } from './progress/view-model'
 import { RecordBook } from './ui/recordbook'
 import type { RecordBookSettingChange, RecordBookSettingsState } from './ui/settings'
@@ -53,6 +59,8 @@ import {
   type AnalyticsSupabaseClient,
 } from './analytics/client'
 import { GameAnalyticsBridge } from './analytics/game-bridge'
+import type { PlayerAccountSnapshot } from './player/controller'
+import type { PlayerProgressScope, ProfileCardView } from './player/types'
 
 const COMBO_RESET_SEC = 1.6
 const GRADES: { n: number; label: string }[] = [
@@ -68,6 +76,17 @@ const GOLDEN_CHANCE = 0.18
 const FEVER_AT = [30, 60, 100, 150, 200]
 const FEVER_DUR = 6
 
+export interface GameOptions {
+  onOpenProfile?: (trigger: HTMLButtonElement) => void
+  onFeatureFlags?: (flags: FeatureFlags) => void
+}
+
+const HIDDEN_PLAYER_ACCOUNT: PlayerAccountSnapshot = {
+  kind: 'guest',
+  signupEnabled: false,
+  card: { visible: false, kind: 'hidden' },
+}
+
 export class Game {
   private renderer: Renderer
   private camera = new Camera()
@@ -82,7 +101,7 @@ export class Game {
   private weapon: Weapon
   private hud: Hud
   private whatsNew: WhatsNew
-  private progress: GameProgressCoordinator
+  private progress!: GameProgressCoordinator
   private progressBridge: GameplayProgressBridge
   private recordBook: RecordBook
   private motionQuery: MediaQueryList
@@ -103,8 +122,18 @@ export class Game {
   private remoteConfig = new RemoteConfigOrchestrator()
   private analytics = new GameAnalyticsBridge(false)
   private questCatalogResolved = false
+  private readonly progressStorage: StorageAdapter = createLazyStorageAdapter()
+  private progressFallback: () => void = () => {}
+  private progressScopeGeneration = 0
+  private progressScopeIdentity = 'guest'
+  private playerAccount: PlayerAccountSnapshot = HIDDEN_PLAYER_ACCOUNT
+  private analyticsInstallSeed = ''
 
-  constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    uiRoot: HTMLElement,
+    private readonly options: GameOptions = {},
+  ) {
     this.renderer = new Renderer(canvas)
     const area = this.renderer.width * this.renderer.height
     const cap = area > 900000 ? 1500 : area > 450000 ? 1200 : 900
@@ -131,25 +160,9 @@ export class Game {
       onOpenRecordBook: this.onOpenRecordBook,
       onShare: this.onShare,
     })
-    const fallback = createMemoryFallbackHandler((notice) => this.hud.notify(notice))
-    this.progress = new GameProgressCoordinator({
-      store: new ProgressStore(createLazyStorageAdapter(), {
-        knownWeaponIds: KNOWN_WEAPON_IDS,
-        knownMoveIds: KNOWN_MOVE_IDS,
-        onMemoryFallback: fallback,
-      }),
-      catalog: BUILT_IN_CATALOG,
-      dayKey: kstDayKey(new Date()),
-      nowIso: () => new Date().toISOString(),
-      notify: (notice) => this.hud.notify(notice),
-      analytics: this.analytics,
-      knownWeaponIds: KNOWN_WEAPON_IDS,
-      knownMoveIds: KNOWN_MOVE_IDS,
-      deferDailyAssignment: true,
-      onDailyQuestTransition: (previous, next) => {
-        this.analytics.trackQuestTransition(previous, next, 'user', true)
-      },
-    })
+    this.progressFallback = createMemoryFallbackHandler((notice) => this.hud.notify(notice))
+    this.progress = this.createProgress(this.createProgressStoreForScope({ kind: 'guest' }))
+    this.analyticsInstallSeed = this.progress.state.installSeed
     this.best = this.progress.state.lifetime.bestCombo
     this.totalTargets = this.progress.state.lifetime.totalTargets
     this.weaponRoster = createWeaponRoster(
@@ -202,10 +215,12 @@ export class Game {
           if (this.progress.selectSkin(characterId, skinId)) this.refreshProgressUI()
         },
         onSettingChange: (change) => this.changeSetting(change),
+        onOpenProfile: (trigger) => this.options.onOpenProfile?.(trigger),
         onClose: () => {
           if (this.progress.markAchievementsSeen()) this.refreshProgressUI()
         },
-      }
+      },
+      this.profileCard(),
     )
     const onMotionPreferenceChange = () => this.applyMotionSetting()
     if (typeof this.motionQuery.addEventListener === 'function') {
@@ -247,6 +262,30 @@ export class Game {
     }
   }
 
+  setPlayerAccount(snapshot: PlayerAccountSnapshot): void {
+    this.playerAccount = snapshot
+    this.refreshProgressUI()
+  }
+
+  setProgressScope(scope: PlayerProgressScope, generation: number): void {
+    const identity = scope.kind === 'guest' ? 'guest' : `player:${scope.profile.userId}`
+    if (generation < this.progressScopeGeneration) return
+    if (generation === this.progressScopeGeneration && identity === this.progressScopeIdentity) return
+
+    this.cancelAction('settingsMode')
+    this.progress.checkpoint('scopeChange')
+    const next = this.createProgress(this.createProgressStoreForScope(scope))
+    this.progress = next
+    this.progressScopeGeneration = generation
+    this.progressScopeIdentity = identity
+    this.combo = 0
+    this.recordActive = false
+    this.hud.setCombo(0)
+    this.controller.setStrongInput(next.state.profile.strongInput)
+    this.applyMotionSetting()
+    this.refreshProgressUI()
+  }
+
   /** Loads optional operations data after the first playable frame and never rejects into boot. */
   async loadRemoteConfig(
     provider: Pick<RemoteQuestConfigProvider, 'loadConfig'>
@@ -274,7 +313,7 @@ export class Game {
   async connectAnalytics(supabase: AnalyticsSupabaseClient | null): Promise<void> {
     try {
       const analytics = await AnalyticsClient.create({
-        installSeed: this.progress.state.installSeed,
+        installSeed: this.analyticsInstallSeed,
         supabase,
         enabled: this.remoteConfig.active.analytics_enabled,
         initialValidHits: this.progress.state.lifetime.validHits,
@@ -360,13 +399,53 @@ export class Game {
     }
   }
 
+  private createProgressStoreForScope(scope: PlayerProgressScope): ProgressStore {
+    const scoped = scope.kind === 'guest'
+      ? { storageKey: undefined, migrateLegacy: true }
+      : {
+          storageKey: progressStorageKey({ kind: 'player', userId: scope.profile.userId }),
+          migrateLegacy: false,
+        }
+    return new ProgressStore(this.progressStorage, {
+      ...scoped,
+      knownWeaponIds: KNOWN_WEAPON_IDS,
+      knownMoveIds: KNOWN_MOVE_IDS,
+      onMemoryFallback: this.progressFallback,
+    })
+  }
+
+  private createProgress(store: ProgressPersistence): GameProgressCoordinator {
+    return new GameProgressCoordinator({
+      store,
+      catalog: this.progress?.questCatalog ?? BUILT_IN_CATALOG,
+      dayKey: kstDayKey(new Date()),
+      nowIso: () => new Date().toISOString(),
+      notify: (notice) => this.hud.notify(notice),
+      analytics: this.analytics,
+      knownWeaponIds: KNOWN_WEAPON_IDS,
+      knownMoveIds: KNOWN_MOVE_IDS,
+      deferDailyAssignment: !this.questCatalogResolved,
+      onDailyQuestTransition: (previous, next) => {
+        this.analytics.trackQuestTransition(previous, next, 'user', true)
+      },
+    })
+  }
+
+  private profileCard(): ProfileCardView {
+    if (this.playerAccount.kind === 'player') return this.playerAccount.card
+    return this.remoteConfig.active.player_profiles_ui
+      ? this.playerAccount.card
+      : { visible: false, kind: 'hidden' }
+  }
+
   private refreshProgressUI(): void {
     this.best = this.progress.state.lifetime.bestCombo
     this.totalTargets = this.progress.state.lifetime.totalTargets
     this.hud.setBest(this.best)
     this.recordBook.render(
       makeRecordBookView(this.progress.state, this.progress.questCatalog),
-      this.settingsState()
+      this.settingsState(),
+      this.profileCard(),
     )
     this.applyGamificationVisibility()
   }
@@ -403,6 +482,7 @@ export class Game {
 
   private applyRemoteFlags(flags: FeatureFlags): void {
     this.analytics.setEnabled(flags.analytics_enabled)
+    try { this.options.onFeatureFlags?.(flags) } catch { /* player UI remains optional */ }
     this.refreshProgressUI()
   }
 

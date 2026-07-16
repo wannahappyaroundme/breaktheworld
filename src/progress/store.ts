@@ -13,6 +13,7 @@ export type CheckpointReason =
   | 'dailyRollover'
   | 'unlock'
   | 'setting'
+  | 'scopeChange'
   | 'pagehide'
 export type ProgressStorageMode = 'persistent' | 'memory'
 

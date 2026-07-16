@@ -721,6 +721,7 @@ describe('ProgressStore checkpoints', () => {
     'dailyRollover',
     'unlock',
     'setting',
+    'scopeChange',
     'pagehide',
   ])('persists the %s checkpoint', (reason) => {
     const storage = new FakeStorage({
