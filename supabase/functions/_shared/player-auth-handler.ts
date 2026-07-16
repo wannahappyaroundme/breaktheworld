@@ -130,10 +130,6 @@ function rateLimited(retryAfterSeconds: number): Response {
   })
 }
 
-function bearerToken(request: Request): string | null {
-  return request.headers.get('authorization')?.match(/^Bearer ([^\s]+)$/i)?.[1] ?? null
-}
-
 function isInternalAlias(value: string | null): value is string {
   return typeof value === 'string'
     && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@players\.invalid$/.test(value)
@@ -284,8 +280,6 @@ async function handlePinChange(
   const current = verification.player
   if (!current.forcePinChange) return json(409, { code: 'change_not_required' })
 
-  const accessToken = bearerToken(request)
-  if (!accessToken) return json(401, { code: 'authentication_required' })
   const authEmail = await dependencies.findAliasByUserId(current.userId)
   if (!isInternalAlias(authEmail)) throw new Error('player_alias_unavailable')
 
@@ -298,7 +292,10 @@ async function handlePinChange(
   }
 
   await dependencies.updateAuthPassword(current.userId, pin)
-  await dependencies.globalSignOut(accessToken)
+  const requester = await dependencies.requester(request)
+  const revocationSession = await dependencies.signIn(authEmail, pin, requester.forwardedFor)
+  if (!isAuthSession(revocationSession)) throw new Error('revocation_session_failed')
+  await dependencies.globalSignOut(revocationSession.access_token)
 
   const completed = await dependencies.clearForcedPinChange(
     current.userId,
@@ -308,7 +305,6 @@ async function handlePinChange(
     throw new Error('credential_completion_failed')
   }
 
-  const requester = await dependencies.requester(request)
   const session = await dependencies.signIn(authEmail, pin, requester.forwardedFor)
   if (!isAuthSession(session)) throw new Error('replacement_session_failed')
   return json(200, sessionPayload(session, completed))

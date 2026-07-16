@@ -108,7 +108,7 @@ function requireResolvedEnvironment() {
   return { url: data.url, secretKey }
 }
 
-function createPasswordClient(forwardedFor: string) {
+function createSecretClient(headers: Record<string, string> = {}) {
   const environment = requireResolvedEnvironment()
   return createClient(environment.url, environment.secretKey, {
     auth: {
@@ -117,9 +117,13 @@ function createPasswordClient(forwardedFor: string) {
       detectSessionInUrl: false,
     },
     global: {
-      headers: { 'sb-forwarded-for': forwardedFor },
+      headers,
     },
   })
+}
+
+function createPasswordClient(forwardedFor: string) {
+  return createSecretClient({ 'sb-forwarded-for': forwardedFor })
 }
 
 export default {
@@ -138,7 +142,7 @@ export default {
           }
         },
         async isFlagEnabled(key) {
-          const result = await admin.from('feature_flags')
+          const result = await context.supabase.from('feature_flags')
             .select('enabled')
             .eq('key', key)
             .maybeSingle()
@@ -243,7 +247,8 @@ export default {
           if (result.error) throw new Error('global_signout_failed')
         },
         async clearForcedPinChange(userId, expectedVersion) {
-          const result = await admin.from('player_profiles')
+          const postSignOutAdmin = createSecretClient()
+          const result = await postSignOutAdmin.from('player_profiles')
             .update({ force_pin_change: false, updated_at: new Date().toISOString() })
             .eq('user_id', userId)
             .eq('credential_version', expectedVersion)

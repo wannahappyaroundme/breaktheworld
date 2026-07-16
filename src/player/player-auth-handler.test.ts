@@ -372,13 +372,15 @@ describe('player auth handler', () => {
       'find-alias',
       'bump-version:1',
       `update-password:${USER_ID}`,
+      'requester',
+      'sign-in:192.0.2.1',
       'global-signout',
       'clear-force:2',
-      'requester',
       'sign-in:192.0.2.1',
     ])
     expect(dependencies.updateAuthPassword).toHaveBeenCalledWith(USER_ID, '246802')
-    expect(dependencies.globalSignOut).toHaveBeenCalledWith('current-access-token')
+    expect(dependencies.globalSignOut).toHaveBeenCalledWith(SESSION.access_token)
+    expect(dependencies.signIn).toHaveBeenCalledTimes(2)
     expect(JSON.stringify(payload)).not.toContain('@players.invalid')
     expect(JSON.stringify(payload)).not.toContain('246802')
   })
