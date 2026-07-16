@@ -162,7 +162,12 @@ function ok<T>(data: T): PlayerApiResult<T> { return { ok: true, data } }
 
 function setup(
   snapshot: PlayerAccountSnapshot = guest(),
-  options: { onRetrySave?: () => void | Promise<void> } = {},
+  options: {
+    onRetrySave?: () => void | Promise<void>
+    onGuestChosen?: () => void
+    onAuthenticated?: () => void
+    onLoggedOut?: () => void
+  } = {},
 ) {
   const doc = new FakeDocument()
   const app = doc.createElement('div')
@@ -221,6 +226,9 @@ function setup(
   const view = new PlayerProfileView(ui as unknown as HTMLElement, controller as never, {
     privacyNotice,
     onRetrySave: options.onRetrySave,
+    onGuestChosen: options.onGuestChosen,
+    onAuthenticated: options.onAuthenticated,
+    onLoggedOut: options.onLoggedOut,
   })
   view.render(snapshot)
   return { doc, ui, recordBook, controller, view, history, fakeWindow }
@@ -240,6 +248,93 @@ beforeEach(() => { vi.useRealTimers() })
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('PlayerProfileView', () => {
+  it('shows the approved first choice before play and cannot be dismissed', () => {
+    const onGuestChosen = vi.fn()
+    const { doc, ui, recordBook, view, fakeWindow } = setup(guest(), { onGuestChosen })
+
+    view.openRequired('choice')
+
+    expect(ui.textContent).toContain('어떻게 시작할까요?')
+    expect(ui.textContent).toContain('새 프로필 만들기')
+    expect(ui.textContent).toContain('내 프로필로 로그인')
+    expect(ui.textContent).toContain('게스트로 시작')
+    expect(action(ui, 'close').hidden).toBe(true)
+    expect(recordBook.inert).toBe(true)
+
+    doc.dispatch('keydown', { key: 'Escape' })
+    fakeWindow.dispatchPop()
+    expect(view.isOpen).toBe(true)
+
+    action(ui, 'guest-start').click()
+    expect(onGuestChosen).toHaveBeenCalledOnce()
+    expect(view.isOpen).toBe(false)
+    expect(recordBook.inert).toBe(false)
+  })
+
+  it('uses the same profile panel for the bounded checking state', () => {
+    const { ui, view } = setup()
+
+    view.openRequired('checking')
+
+    expect(ui.textContent).toContain('시작을 준비하고 있어요')
+    expect(ui.textContent).toContain('프로필을 확인하는 중이에요.')
+    expect(action(ui, 'close').hidden).toBe(true)
+    view.releaseRequired()
+    expect(view.isOpen).toBe(false)
+  })
+
+  it('keeps the ordinary record-book profile screen closable and unchanged', () => {
+    const { ui, view } = setup()
+
+    view.open(null)
+
+    expect(ui.textContent).toContain('새 프로필에서 첫 기록부터 새로 쌓아요.')
+    expect(ui.textContent).not.toContain('게스트로 시작')
+    expect(action(ui, 'close').hidden).toBe(false)
+    action(ui, 'close').click()
+    expect(view.isOpen).toBe(false)
+  })
+
+  it('closes required entry after login and reports authentication', async () => {
+    const onAuthenticated = vi.fn()
+    const { ui, view } = setup(guest(), { onAuthenticated })
+    view.openRequired('choice')
+    action(ui, 'login-start').click()
+    const name = ui.querySelector('[data-player-field="profile-name"]')!
+    const pin = ui.querySelector('[data-player-field="pin"]')!
+    name.value = '예진'
+    pin.value = '024550'
+    name.dispatch('input')
+    pin.dispatch('input')
+
+    action(ui, 'login-submit').click()
+    await flushAsync()
+
+    expect(onAuthenticated).toHaveBeenCalledOnce()
+    expect(view.isOpen).toBe(false)
+  })
+
+  it('turns a completed logout into a required choice', async () => {
+    const onLoggedOut = vi.fn()
+    const snapshot: PlayerAccountSnapshot = {
+      kind: 'player', profile: PROFILE, forcePinChange: false,
+      card: {
+        visible: true, kind: 'player', displayName: '예진', userId: PROFILE.userId,
+        sync: 'saved', lastSavedAt: null,
+      },
+    }
+    const { ui, view } = setup(snapshot, { onLoggedOut })
+    view.open(null)
+
+    action(ui, 'logout').click()
+    await flushAsync()
+
+    expect(onLoggedOut).toHaveBeenCalledOnce()
+    expect(ui.textContent).toContain('게스트로 시작')
+    expect(action(ui, 'close').hidden).toBe(true)
+    expect(view.isOpen).toBe(true)
+  })
+
   it('opens one accessible guest dialog with the approved choice copy', () => {
     const { doc, ui, recordBook, view, history } = setup()
     const trigger = doc.createElement('button')

@@ -5,7 +5,8 @@ import { PLAYER_PRIVACY_NOTICE, type PlayerPrivacyNotice } from './privacy'
 import type { PlayerApiResult } from './types'
 import './style.css'
 
-type ProfileScreen = 'guest' | 'create' | 'login' | 'signed' | 'force'
+type ProfileScreen = 'starting' | 'guest' | 'create' | 'login' | 'signed' | 'force'
+type RequiredEntryScreen = 'checking' | 'choice'
 
 type ControllerPort = Pick<
   PlayerAccountController,
@@ -22,6 +23,9 @@ type ControllerPort = Pick<
 export interface PlayerProfileViewOptions {
   privacyNotice?: PlayerPrivacyNotice
   onRetrySave?: () => void | Promise<void>
+  onGuestChosen?: () => void
+  onAuthenticated?: () => void
+  onLoggedOut?: () => void
 }
 
 interface InertState {
@@ -59,9 +63,13 @@ export class PlayerProfileView {
   private readonly live: HTMLParagraphElement
   private readonly privacyNotice: PlayerPrivacyNotice
   private readonly onRetrySave?: PlayerProfileViewOptions['onRetrySave']
+  private readonly onGuestChosen?: PlayerProfileViewOptions['onGuestChosen']
+  private readonly onAuthenticated?: PlayerProfileViewOptions['onAuthenticated']
+  private readonly onLoggedOut?: PlayerProfileViewOptions['onLoggedOut']
   private snapshot: PlayerAccountSnapshot
   private screen: ProfileScreen = 'guest'
   private openState = false
+  private requiredEntry = false
   private historySentinel = false
   private returnFocus: HTMLElement | null = null
   private inertStates: InertState[] = []
@@ -83,6 +91,9 @@ export class PlayerProfileView {
     this.snapshot = controller.snapshot
     this.privacyNotice = options.privacyNotice ?? PLAYER_PRIVACY_NOTICE
     this.onRetrySave = options.onRetrySave
+    this.onGuestChosen = options.onGuestChosen
+    this.onAuthenticated = options.onAuthenticated
+    this.onLoggedOut = options.onLoggedOut
 
     this.layer = this.doc.createElement('div')
     this.layer.className = 'player-profile-layer'
@@ -118,7 +129,7 @@ export class PlayerProfileView {
 
     this.layer.addEventListener('click', (event) => {
       event.stopPropagation()
-      if (event.target === this.layer && !this.isForced()) this.close()
+      if (event.target === this.layer && !this.isBlocking()) this.close()
     })
     for (const name of ['pointerdown', 'pointermove', 'pointerup', 'touchstart', 'touchmove', 'touchend']) {
       this.layer.addEventListener(name, (event) => event.stopPropagation(), { passive: true })
@@ -130,14 +141,35 @@ export class PlayerProfileView {
   }
 
   open(trigger: HTMLElement | null): void {
+    this.requiredEntry = false
+    this.openInternal(trigger, false)
+  }
+
+  openRequired(screen: RequiredEntryScreen = 'choice'): void {
+    this.requiredEntry = true
+    this.screen = this.isForced()
+      ? 'force'
+      : screen === 'checking' ? 'starting' : 'guest'
+    this.openInternal(null, true)
+  }
+
+  releaseRequired(): void {
+    if (!this.requiredEntry) return
+    this.requiredEntry = false
+    this.close()
+  }
+
+  private openInternal(trigger: HTMLElement | null, keepScreen: boolean): void {
     if (this.openState) {
       this.paint()
       return
     }
     this.returnFocus = trigger
-    this.screen = this.snapshot.kind === 'player'
-      ? (this.snapshot.forcePinChange ? 'force' : 'signed')
-      : 'guest'
+    if (!keepScreen) {
+      this.screen = this.snapshot.kind === 'player'
+        ? (this.snapshot.forcePinChange ? 'force' : 'signed')
+        : 'guest'
+    }
     this.openState = true
     this.layer.hidden = false
     this.layer.setAttribute('aria-hidden', 'false')
@@ -151,7 +183,7 @@ export class PlayerProfileView {
   }
 
   close(): void {
-    if (!this.openState || this.isForced()) return
+    if (!this.openState || this.isBlocking()) return
     if (this.historySentinel) {
       this.historySentinel = false
       try { history.back() } catch { /* cleanup below remains authoritative */ }
@@ -181,10 +213,11 @@ export class PlayerProfileView {
 
   private paint(): void {
     this.layer.setAttribute('data-player-screen', this.screen)
-    this.closeButton.hidden = this.isForced()
-    this.closeButton.disabled = this.isForced()
+    this.closeButton.hidden = this.isBlocking()
+    this.closeButton.disabled = this.isBlocking()
     this.live.textContent = this.error
     switch (this.screen) {
+      case 'starting': this.renderStarting(); break
       case 'guest': this.renderGuest(); break
       case 'create': this.renderCreate(); break
       case 'login': this.renderLogin(); break
@@ -193,12 +226,24 @@ export class PlayerProfileView {
     }
   }
 
+  private renderStarting(): void {
+    this.heading.textContent = '시작을 준비하고 있어요'
+    this.body.replaceChildren(element(
+      this.doc,
+      'p',
+      '프로필을 확인하는 중이에요.',
+      'player-profile-lead',
+    ))
+  }
+
   private renderGuest(): void {
-    this.heading.textContent = '프로필'
+    this.heading.textContent = this.requiredEntry ? '어떻게 시작할까요?' : '프로필'
     const intro = element(
       this.doc,
       'p',
-      '새 프로필에서 첫 기록부터 새로 쌓아요. 지금 게스트 기록은 이 기기에 그대로 남아요.',
+      this.requiredEntry
+        ? '프로필로 시작하면 여러 기기에서 기록을 이어갈 수 있어요. 게스트로 시작하면 이 기기에만 기록돼요.'
+        : '새 프로필에서 첫 기록부터 새로 쌓아요. 지금 게스트 기록은 이 기기에 그대로 남아요.',
       'player-profile-lead',
     )
     const create = this.actionButton('새 프로필 만들기', 'create-start', true)
@@ -225,7 +270,17 @@ export class PlayerProfileView {
         : '프로필 만들기가 열리기 전에도 로그인할 수 있어요. 게스트 플레이는 지금 바로 이어갈 수 있어요.',
       'player-profile-note',
     )
-    this.body.replaceChildren(intro, create, login, note)
+    if (!this.requiredEntry) {
+      this.body.replaceChildren(intro, create, login, note)
+      return
+    }
+    const guest = this.actionButton('게스트로 시작', 'guest-start')
+    guest.addEventListener('click', () => {
+      this.requiredEntry = false
+      this.close()
+      this.onGuestChosen?.()
+    })
+    this.body.replaceChildren(intro, create, login, guest)
   }
 
   private renderCreate(): void {
@@ -334,7 +389,7 @@ export class PlayerProfileView {
       )
       this.busy = false
       this.error = exactError(result)
-      if (result.ok) this.render(this.controller.snapshot)
+      if (result.ok) this.finishAuthentication()
       else this.paint()
     })
     form.append(name.label, check, checkState, advanced)
@@ -378,7 +433,7 @@ export class PlayerProfileView {
       const result = await this.controller.login(this.loginForm.profileName, this.loginForm.pin)
       this.busy = false
       this.error = result.ok ? '' : 'ID 또는 PIN을 다시 확인해 주세요.'
-      if (result.ok) this.render(this.controller.snapshot)
+      if (result.ok) this.finishAuthentication()
       else this.paint()
     })
     update()
@@ -430,6 +485,8 @@ export class PlayerProfileView {
         this.logoutPending = false
         this.snapshot = this.controller.snapshot
         this.screen = 'guest'
+        this.requiredEntry = true
+        this.onLoggedOut?.()
       } else if (result.error.code === 'pending_sync') {
         this.logoutPending = true
       }
@@ -469,6 +526,8 @@ export class PlayerProfileView {
         this.logoutPending = false
         this.snapshot = this.controller.snapshot
         this.screen = 'guest'
+        this.requiredEntry = true
+        this.onLoggedOut?.()
       }
       this.paint()
     })
@@ -523,7 +582,7 @@ export class PlayerProfileView {
       const result = await this.controller.changePin(this.forceForm.pin, this.forceForm.confirmation)
       this.busy = false
       this.error = exactError(result)
-      if (result.ok) this.render(this.controller.snapshot)
+      if (result.ok) this.finishAuthentication(true)
       else this.paint()
     })
     logout.addEventListener('click', async () => {
@@ -535,6 +594,8 @@ export class PlayerProfileView {
       if (result.ok) {
         this.snapshot = this.controller.snapshot
         this.screen = 'guest'
+        this.requiredEntry = true
+        this.onLoggedOut?.()
       }
       this.paint()
     })
@@ -613,6 +674,20 @@ export class PlayerProfileView {
     return this.snapshot.kind === 'player' && this.snapshot.forcePinChange
   }
 
+  private isBlocking(): boolean {
+    return this.requiredEntry || this.isForced()
+  }
+
+  private finishAuthentication(forceClose = false): void {
+    const closeAfter = forceClose || this.requiredEntry
+    this.render(this.controller.snapshot)
+    if (closeAfter) {
+      this.requiredEntry = false
+      this.close()
+    }
+    this.onAuthenticated?.()
+  }
+
   private makeSiblingsInert(): void {
     const localSurfaces = Array.from(this.parent.children)
       .filter((child): child is HTMLElement => child !== this.layer)
@@ -673,7 +748,7 @@ export class PlayerProfileView {
   private readonly onPopState = (): void => {
     if (!this.openState) return
     this.historySentinel = false
-    if (this.isForced()) {
+    if (this.isBlocking()) {
       this.pushHistorySentinel()
       this.paint()
       return
@@ -684,7 +759,7 @@ export class PlayerProfileView {
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (!this.openState) return
     if (event.key === 'Escape') {
-      if (!this.isForced()) this.close()
+      if (!this.isBlocking()) this.close()
       event.preventDefault()
       return
     }
