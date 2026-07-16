@@ -37,6 +37,9 @@ function payload(overrides: Partial<RemoteConfigPayload> = {}): RemoteConfigPayl
       { key: 'gamification_enabled', enabled: false, updated_at: '2026-07-16T00:00:00.000Z' },
       { key: 'character_variants_enabled', enabled: true, updated_at: '2026-07-16T00:00:00.000Z' },
       { key: 'analytics_enabled', enabled: false, updated_at: '2026-07-16T00:00:00.000Z' },
+      { key: 'player_profiles_ui', enabled: true, updated_at: '2026-07-16T00:00:00.000Z' },
+      { key: 'player_signup', enabled: true, updated_at: '2026-07-16T00:00:00.000Z' },
+      { key: 'player_sync_writes', enabled: false, updated_at: '2026-07-16T00:00:00.000Z' },
     ],
     ...overrides,
   }
@@ -91,6 +94,9 @@ describe('RemoteQuestConfigProvider', () => {
       gamification_enabled: false,
       character_variants_enabled: true,
       analytics_enabled: false,
+      player_profiles_ui: true,
+      player_signup: true,
+      player_sync_writes: false,
     })
     expect(JSON.parse(storage.values.get(REMOTE_CONFIG_CACHE_KEY)!)).toMatchObject({
       fetchedAt: NOW,
@@ -253,10 +259,11 @@ describe('RemoteQuestConfigProvider', () => {
   it.each([
     ['duplicate quest IDs', payload({ quests: [payload().quests[0], payload().quests[0]] })],
     ['unknown flag keys', payload({ flags: [
-      ...payload().flags.slice(0, 2),
+      ...payload().flags,
       { key: 'surprise_enabled', enabled: true, updated_at: '2026-07-16T00:00:00.000Z' },
     ] })],
-    ['missing flag rows', payload({ flags: payload().flags.slice(0, 2) })],
+    ['missing flag rows', payload({ flags: payload().flags.slice(0, 5) })],
+    ['duplicate flag rows', payload({ flags: [...payload().flags, payload().flags[0]] })],
     ['reversed active interval', payload({ quests: [{
       ...payload().quests[0],
       active_from: '2026-07-17T00:00:00.000Z',
@@ -271,6 +278,23 @@ describe('RemoteQuestConfigProvider', () => {
   ])('atomically rejects %s', async (_label, unsafe) => {
     const result = await provider({ reader: async () => unsafe, sleep: async () => {} }).loadConfig()
     expect(result.source).toBe('builtIn')
+  })
+
+  it('rejects a cached legacy three-flag payload instead of guessing player flags', async () => {
+    const legacy = payload({ flags: payload().flags.slice(0, 3) })
+    const cached = JSON.stringify({ fetchedAt: NOW, payload: legacy })
+
+    const result = await provider({
+      reader: async () => { throw new RemoteConfigError('offline') },
+      storage: memoryStorage(cached),
+      sleep: async () => {},
+    }).loadConfig()
+
+    expect(result).toEqual({
+      catalog: BUILT_IN_CATALOG,
+      flags: BUILT_IN_FLAGS,
+      source: 'builtIn',
+    })
   })
 
   it('treats blocked cache reads and writes as optional', async () => {
@@ -447,9 +471,9 @@ describe('RemoteConfigOrchestrator', () => {
     orchestrator.stage({
       catalog: { version: 7, quests: BUILT_IN_CATALOG.quests },
       flags: {
+        ...BUILT_IN_FLAGS,
         gamification_enabled: false,
         character_variants_enabled: false,
-        analytics_enabled: false,
       },
     })
 

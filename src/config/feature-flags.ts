@@ -5,6 +5,9 @@ export const BUILT_IN_FLAGS = {
   gamification_enabled: true,
   character_variants_enabled: true,
   analytics_enabled: false,
+  player_profiles_ui: false,
+  player_signup: false,
+  player_sync_writes: false,
 } as const
 
 export type FeatureFlags = {
