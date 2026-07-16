@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { BUILT_IN_FLAGS } from '../config/feature-flags'
+import type { PlayerRestoreOutcome } from './entry-choice'
 import { createPlayerPrivacyNotice } from './privacy'
 import { PlayerAccountController, type PlayerAccountControllerOptions } from './controller'
 import type { PlayerApiResult, PlayerProfile, PlayerProgressScope } from './types'
@@ -66,6 +67,24 @@ describe('PlayerAccountController', () => {
     expect(controller.snapshot).toMatchObject({ kind: 'player', profile: PROFILE })
     expect(scopes).toEqual([{ scope: { kind: 'player', profile: PROFILE }, generation: 1 }])
   })
+
+  it.each([
+    ['player', ok<PlayerProfile | null>(PROFILE), 'player'],
+    ['force', ok<PlayerProfile | null>({ ...PROFILE, forcePinChange: true }), 'force'],
+    ['guest', ok<PlayerProfile | null>(null), 'guest'],
+    ['error', {
+      ok: false,
+      error: { code: 'service_unavailable', message: '다시 확인해 주세요.' },
+    } satisfies PlayerApiResult<PlayerProfile | null>, 'error'],
+  ] as const)(
+    'returns the %s restoration outcome',
+    async (_label, restored, expected: PlayerRestoreOutcome) => {
+      const { controller, api } = setup()
+      api.restoreSession.mockResolvedValueOnce(restored)
+
+      await expect(controller.start()).resolves.toBe(expected)
+    },
+  )
 
   it('invalidates duplicate confirmation immediately when the ID changes', async () => {
     const { controller, api } = setup()

@@ -4,6 +4,7 @@ import {
 } from '../../supabase/functions/_shared/player-contract'
 import { BUILT_IN_FLAGS, type FeatureFlags } from '../config/feature-flags'
 import type { PlayerApi } from './api'
+import type { PlayerRestoreOutcome } from './entry-choice'
 import type { SyncStatus } from './sync-client'
 import {
   PLAYER_PRIVACY_NOTICE,
@@ -104,18 +105,24 @@ export class PlayerAccountController {
     return { ...this.duplicate }
   }
 
-  async start(): Promise<void> {
+  async start(): Promise<PlayerRestoreOutcome> {
     const generation = this.nextGeneration()
     this.current = { kind: 'restoring', card: this.guestCard('프로필을 확인하는 중이에요') }
     this.emit()
     const result = await this.api.restoreSession()
-    if (!this.isCurrent(generation)) return
-    if (!result.ok || result.data === null) {
+    if (!this.isCurrent(generation)) return 'error'
+    if (!result.ok) {
       this.current = this.guestSnapshot()
       this.emit()
-      return
+      return 'error'
+    }
+    if (result.data === null) {
+      this.current = this.guestSnapshot()
+      this.emit()
+      return 'guest'
     }
     this.applyPlayer(result.data, generation)
+    return result.data.forcePinChange ? 'force' : 'player'
   }
 
   setFeatureFlags(flags: FeatureFlags, notice: PlayerPrivacyNotice = this.privacyNotice): void {
