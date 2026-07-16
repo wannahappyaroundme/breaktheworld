@@ -770,7 +770,7 @@ Run 50 login/sync/profile-open cycles and confirm listeners, timers, active requ
 1. diff local/production migration history;
 2. confirm production project region and the exact public `VITE_PLAYER_DELETION_CONTACT` and `VITE_PLAYER_PROCESSING_NOTICE` copy; keep signup closed if either is blank;
 3. set those two public repository build variables and Edge secrets through their separate approved stores;
-4. deploy migrations `002` then `003`;
+4. deploy migrations `002`, `003`, then `004` (authenticated players read the same public flags as guests);
 5. deploy `player-auth`, `manage-player`, `player-sync`;
 6. verify all three player flags are false and both rate-limit cleanup Cron jobs have a successful recent run;
 7. create one owner-only test profile and rerun auth/sync/reset/delete smoke;

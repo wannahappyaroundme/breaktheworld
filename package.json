@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "verify:player-auth": "node --experimental-websocket scripts/verify-player-auth.mjs"
+    "verify:player-auth": "node --experimental-websocket scripts/verify-player-auth.mjs",
+    "verify:player-sync": "node --experimental-websocket scripts/verify-player-sync.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.109.0",

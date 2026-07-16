@@ -19,6 +19,8 @@ jobs:
     env:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL || '' }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY || '' }}
+      VITE_PLAYER_DELETION_CONTACT: ${{ vars.VITE_PLAYER_DELETION_CONTACT || '' }}
+      VITE_PLAYER_PROCESSING_NOTICE: ${{ vars.VITE_PLAYER_PROCESSING_NOTICE || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,6 +32,7 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

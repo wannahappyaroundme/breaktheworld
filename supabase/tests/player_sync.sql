@@ -74,6 +74,14 @@ select ok(not has_table_privilege('authenticated', 'public.player_daily_assignme
 select ok(not has_table_privilege('authenticated', 'public.player_daily_completions', 'select'), 'players cannot inspect completion rows');
 select ok(not has_table_privilege('authenticated', 'public.player_sync_rate_limits', 'select'), 'players cannot inspect sync limits');
 
+set local role authenticated;
+select is(
+  (select count(*) from public.feature_flags where key = 'player_sync_writes'),
+  1::bigint,
+  'authenticated players can read the public sync flag'
+);
+reset role;
+
 select ok(
   has_function_privilege('service_role', 'public.accept_player_operations(uuid,uuid,bigint,jsonb)', 'execute'),
   'service role can accept operations'
