@@ -34,6 +34,8 @@ interface DependencyOptions {
   deniedAction?: 'check_name' | 'signup' | 'login_name' | 'login_requester'
   createResult?: 'created' | 'duplicate_name'
   signInFails?: boolean
+  forcedPinChange?: boolean
+  changeFailureAt?: 'password' | 'bump' | 'signout' | 'clear'
   throwAt?: 'requester' | 'find' | 'create-auth' | 'create-profile' | 'sign-in'
 }
 
@@ -76,15 +78,50 @@ function dependency(options: DependencyOptions = {}) {
       if (options.throwAt === 'sign-in') throw new Error('private sign-in failure')
       return options.signInFails ? null : SESSION
     }),
-    verifyCurrentPlayer: vi.fn(async () => ({
-      ok: true as const,
-      player: {
+    verifyCurrentPlayer: vi.fn(async () => {
+      calls.push('verify-current')
+      return {
+        ok: true as const,
+        player: {
+          userId: USER_ID,
+          displayName: 'Yejin',
+          credentialVersion: 1,
+          forcePinChange: options.forcedPinChange ?? false,
+        },
+      }
+    }),
+    findAliasByUserId: vi.fn(async () => {
+      calls.push('find-alias')
+      return `${ALIAS_ID}@players.invalid`
+    }),
+    updateAuthPassword: vi.fn(async (userId: string) => {
+      calls.push(`update-password:${userId}`)
+      if (options.changeFailureAt === 'password') throw new Error('private password failure')
+    }),
+    bumpCredentialVersion: vi.fn(async (_userId: string, expectedVersion: number) => {
+      calls.push(`bump-version:${expectedVersion}`)
+      if (options.changeFailureAt === 'bump') throw new Error('private version failure')
+      return {
         userId: USER_ID,
         displayName: 'Yejin',
-        credentialVersion: 1,
+        credentialVersion: expectedVersion + 1,
+        forcePinChange: true,
+      }
+    }),
+    globalSignOut: vi.fn(async () => {
+      calls.push('global-signout')
+      if (options.changeFailureAt === 'signout') throw new Error('private signout failure')
+    }),
+    clearForcedPinChange: vi.fn(async (_userId: string, expectedVersion: number) => {
+      calls.push(`clear-force:${expectedVersion}`)
+      if (options.changeFailureAt === 'clear') throw new Error('private profile failure')
+      return {
+        userId: USER_ID,
+        displayName: 'Yejin',
+        credentialVersion: expectedVersion,
         forcePinChange: false,
-      },
-    })),
+      }
+    }),
     nowIso: () => '2026-07-16T00:00:00.000Z',
     randomUuid: () => ALIAS_ID,
   }
@@ -295,6 +332,71 @@ describe('player auth handler', () => {
       },
     })
   })
+
+  it('requires an owner-reset profile before changing the temporary PIN', async () => {
+    const { dependencies } = dependency({ forcedPinChange: false })
+    const response = await createPlayerAuthHandler(dependencies)(new Request('http://local/player-auth', {
+      method: 'POST',
+      headers: { authorization: 'Bearer current-access-token' },
+      body: JSON.stringify({ action: 'change-pin', pin: '246802', pinConfirmation: '246802' }),
+    }))
+
+    expect(response.status).toBe(409)
+    expect(await body(response)).toEqual({ code: 'change_not_required' })
+    expect(dependencies.updateAuthPassword).not.toHaveBeenCalled()
+  })
+
+  it('changes a forced PIN, invalidates every old session, and returns the replacement session', async () => {
+    const { dependencies, calls } = dependency({ forcedPinChange: true })
+    const response = await createPlayerAuthHandler(dependencies)(new Request('http://local/player-auth', {
+      method: 'POST',
+      headers: { authorization: 'Bearer current-access-token' },
+      body: JSON.stringify({ action: 'change-pin', pin: '246802', pinConfirmation: '246802' }),
+    }))
+
+    expect(response.status).toBe(200)
+    const payload = await body(response)
+    expect(payload).toEqual({
+      accessToken: SESSION.access_token,
+      refreshToken: SESSION.refresh_token,
+      expiresAt: SESSION.expires_at,
+      profile: {
+        userId: USER_ID,
+        displayName: 'Yejin',
+        forcePinChange: false,
+        credentialVersion: 2,
+      },
+    })
+    expect(calls).toEqual([
+      'verify-current',
+      'find-alias',
+      'bump-version:1',
+      `update-password:${USER_ID}`,
+      'global-signout',
+      'clear-force:2',
+      'requester',
+      'sign-in:192.0.2.1',
+    ])
+    expect(dependencies.updateAuthPassword).toHaveBeenCalledWith(USER_ID, '246802')
+    expect(dependencies.globalSignOut).toHaveBeenCalledWith('current-access-token')
+    expect(JSON.stringify(payload)).not.toContain('@players.invalid')
+    expect(JSON.stringify(payload)).not.toContain('246802')
+  })
+
+  it.each(['password', 'bump', 'signout', 'clear'] as const)(
+    'returns a safe retryable failure when PIN change stops at %s',
+    async (changeFailureAt) => {
+      const { dependencies } = dependency({ forcedPinChange: true, changeFailureAt })
+      const response = await createPlayerAuthHandler(dependencies)(new Request('http://local/player-auth', {
+        method: 'POST',
+        headers: { authorization: 'Bearer current-access-token' },
+        body: JSON.stringify({ action: 'change-pin', pin: '246802', pinConfirmation: '246802' }),
+      }))
+
+      expect(response.status).toBe(503)
+      expect(await body(response)).toEqual({ code: 'service_unavailable' })
+    },
+  )
 
   it('never returns dependency errors or credential values', async () => {
     const { dependencies } = dependency({ throwAt: 'sign-in' })

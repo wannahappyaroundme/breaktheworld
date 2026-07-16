@@ -60,6 +60,11 @@ export interface PlayerAuthDependencies {
   deleteAuthUser(userId: string): Promise<void>
   signIn(email: string, pin: string, forwardedFor: string): Promise<AuthSession | null>
   verifyCurrentPlayer(request: Request): Promise<CurrentPlayerVerification>
+  findAliasByUserId(userId: string): Promise<string | null>
+  updateAuthPassword(userId: string, pin: string): Promise<void>
+  bumpCredentialVersion(userId: string, expectedVersion: number): Promise<CurrentPlayer>
+  globalSignOut(accessToken: string): Promise<void>
+  clearForcedPinChange(userId: string, expectedVersion: number): Promise<CurrentPlayer>
   nowIso(): string
   randomUuid(): string
 }
@@ -123,6 +128,28 @@ function rateLimited(retryAfterSeconds: number): Response {
     code: 'rate_limited',
     retryAfterSeconds: Math.max(1, Math.ceil(retryAfterSeconds)),
   })
+}
+
+function bearerToken(request: Request): string | null {
+  return request.headers.get('authorization')?.match(/^Bearer ([^\s]+)$/i)?.[1] ?? null
+}
+
+function isInternalAlias(value: string | null): value is string {
+  return typeof value === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@players\.invalid$/.test(value)
+}
+
+function isTransitionedPlayer(
+  value: CurrentPlayer,
+  expectedUserId: string,
+  expectedVersion: number,
+  forcePinChange: boolean,
+): boolean {
+  return value.userId === expectedUserId
+    && value.credentialVersion === expectedVersion
+    && value.forcePinChange === forcePinChange
+    && typeof value.displayName === 'string'
+    && value.displayName.length > 0
 }
 
 async function safelyDeleteAuthUser(
@@ -247,6 +274,46 @@ async function handleLogin(
     : json(401, { code: 'login_failed' })
 }
 
+async function handlePinChange(
+  dependencies: PlayerAuthDependencies,
+  request: Request,
+  pin: string,
+): Promise<Response> {
+  const verification = await dependencies.verifyCurrentPlayer(request)
+  if (!verification.ok) return json(verification.status, { code: verification.code })
+  const current = verification.player
+  if (!current.forcePinChange) return json(409, { code: 'change_not_required' })
+
+  const accessToken = bearerToken(request)
+  if (!accessToken) return json(401, { code: 'authentication_required' })
+  const authEmail = await dependencies.findAliasByUserId(current.userId)
+  if (!isInternalAlias(authEmail)) throw new Error('player_alias_unavailable')
+
+  const bumped = await dependencies.bumpCredentialVersion(
+    current.userId,
+    current.credentialVersion,
+  )
+  if (!isTransitionedPlayer(bumped, current.userId, current.credentialVersion + 1, true)) {
+    throw new Error('credential_transition_failed')
+  }
+
+  await dependencies.updateAuthPassword(current.userId, pin)
+  await dependencies.globalSignOut(accessToken)
+
+  const completed = await dependencies.clearForcedPinChange(
+    current.userId,
+    bumped.credentialVersion,
+  )
+  if (!isTransitionedPlayer(completed, current.userId, bumped.credentialVersion, false)) {
+    throw new Error('credential_completion_failed')
+  }
+
+  const requester = await dependencies.requester(request)
+  const session = await dependencies.signIn(authEmail, pin, requester.forwardedFor)
+  if (!isAuthSession(session)) throw new Error('replacement_session_failed')
+  return json(200, sessionPayload(session, completed))
+}
+
 export function createPlayerAuthHandler(dependencies: PlayerAuthDependencies) {
   return async (request: Request): Promise<Response> => {
     if (request.method !== 'POST') return json(405, { code: 'method_not_allowed' })
@@ -273,7 +340,7 @@ export function createPlayerAuthHandler(dependencies: PlayerAuthDependencies) {
             : json(verification.status, { code: verification.code })
         }
         case 'change-pin':
-          return json(400, { code: 'invalid_request' })
+          return await handlePinChange(dependencies, request, input.pin)
       }
     } catch {
       return json(503, { code: 'service_unavailable' })
