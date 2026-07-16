@@ -215,6 +215,26 @@ describe('quest catalog', () => {
 })
 
 describe('custom daily quest reconnect', () => {
+  it('keeps a valid 60-character Unicode snapshot across reload', () => {
+    const copy = `가${'🙂'.repeat(59)}`
+    const custom = createQuestDefinition({
+      id: 'custom_unicode_2', copy, event: 'TARGET_DESTROYED', target: 2,
+    })
+    const assigned = assignDailyQuest(
+      createDefaultProgress('unicode-seed'),
+      '2026-07-17',
+      { version: 8, quests: [custom] }
+    )
+
+    const restored = parseProgress(
+      JSON.parse(JSON.stringify(assigned)) as unknown,
+      ['hammer'],
+      []
+    )
+
+    expect(restored.daily.quest?.copy).toBe(copy)
+  })
+
   it('uses a local fixed predicate for custom definitions and never remote function code', () => {
     const custom = createQuestDefinition({
       id: 'custom_targets_2',
@@ -375,6 +395,10 @@ describe('daily assignment and notices', () => {
       expect(first.daily).toEqual({
         dayKey: '2026-07-17',
         questId: expect.any(String),
+        quest: expect.objectContaining({
+          copy: expect.any(String),
+          event: expect.stringMatching(/^(CHARGE_RELEASED|WEAPON_USED|TARGET_DESTROYED)$/),
+        }),
         target: expect.any(Number),
         progress: 0,
         distinctIds: [],

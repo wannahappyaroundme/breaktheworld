@@ -1,6 +1,6 @@
 import type { GameEvent } from './events'
 import { isCharacterWeaponId } from './events'
-import type { ProgressStateV1 } from './types'
+import type { DailyQuestSnapshot, ProgressStateV1 } from './types'
 
 export type BuiltInQuestId = 'charged_finisher_2' | 'characters_3' | 'targets_3'
 export type QuestEventType = 'CHARGE_RELEASED' | 'WEAPON_USED' | 'TARGET_DESTROYED'
@@ -38,6 +38,46 @@ export interface QuestCatalogProvider {
   loadCatalog(): Promise<QuestCatalogSnapshot | null>
 }
 
+export function questSnapshot(definition: QuestDefinition): DailyQuestSnapshot {
+  return {
+    copy: definition.copy,
+    event: definition.event,
+    distinct: definition.distinct ?? null,
+  }
+}
+
+export function isSafeQuestCopy(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const length = Array.from(value).length
+  const hasEmDash = Array.from(value).some((character) => character.codePointAt(0) === 0x2014)
+  return length >= 2 && length <= 60 && /[가-힣]/.test(value) && !hasEmDash
+}
+
+export function questFromSnapshot(
+  daily: ProgressStateV1['daily']
+): QuestDefinition | undefined {
+  const snapshot = daily.quest
+  if (
+    !snapshot
+    || !isSafeQuestCopy(snapshot.copy)
+    || !['CHARGE_RELEASED', 'WEAPON_USED', 'TARGET_DESTROYED'].includes(snapshot.event)
+    || (snapshot.distinct !== null && snapshot.distinct !== 'weaponId')
+  ) {
+    return undefined
+  }
+  try {
+    const definition = createQuestDefinition({
+      id: daily.questId,
+      copy: snapshot.copy,
+      event: snapshot.event,
+      target: daily.target,
+    })
+    return (definition.distinct ?? null) === snapshot.distinct ? definition : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export function isSafeQuestId(id: string): boolean {
   return SAFE_QUEST_ID.test(id)
 }
@@ -45,8 +85,7 @@ export function isSafeQuestId(id: string): boolean {
 export function createQuestDefinition(input: QuestDefinitionInput): QuestDefinition {
   if (
     !isSafeQuestId(input.id)
-    || typeof input.copy !== 'string'
-    || input.copy.trim() === ''
+    || !isSafeQuestCopy(input.copy)
     || !Number.isSafeInteger(input.target)
     || input.target < 1
     || input.target > QUEST_TARGET_MAX
@@ -184,6 +223,7 @@ export function assignDailyQuest(
     daily: {
       dayKey,
       questId: quest.id,
+      quest: questSnapshot(quest),
       target: quest.target,
       progress: 0,
       distinctIds: [],

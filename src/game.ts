@@ -377,15 +377,19 @@ export class Game {
       applyCatalog: (catalog) => {
         if (!this.progress.setCatalog(catalog)) return
         this.questCatalogResolved = true
+      },
+      onFlagsApplied: (flags) => {
+        this.applyRemoteFlags(flags)
         this.ensureCurrentDay()
       },
-      onFlagsApplied: (flags) => this.applyRemoteFlags(flags),
     })
   }
 
   private ensureCurrentDay(): boolean {
     if (!this.questCatalogResolved) return false
-    const changed = this.progress.ensureDailyQuest(kstDayKey(new Date()))
+    const changed = this.progress.ensureDailyQuest(kstDayKey(new Date()), {
+      gamificationEnabled: this.remoteConfig.active.gamification_enabled,
+    })
     if (changed) this.refreshProgressUI()
     return changed
   }

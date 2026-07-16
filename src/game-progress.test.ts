@@ -7,8 +7,14 @@ import {
   type ProgressLoadResult,
 } from './progress/store'
 import type { ProgressStateV1 } from './progress/types'
-import { BUILT_IN_QUESTS, type QuestCatalogSnapshot } from './progress/catalog'
+import {
+  BUILT_IN_QUESTS,
+  createQuestDefinition,
+  type QuestCatalogSnapshot,
+} from './progress/catalog'
 import { kstDayKey } from './progress/day'
+import { parseProgress } from './progress/validate'
+import { makeRecordBookView } from './progress/view-model'
 import { CHARACTER_MOVE_IDS } from './weapons/character-catalog'
 import {
   ActionCheckpointBatcher,
@@ -294,6 +300,96 @@ describe('GameProgressCoordinator', () => {
     expect(progress.ensureDailyQuest('2026-07-17')).toBe(false)
     expect(progress.state.daily).toEqual(state.daily)
     expect(store.saves).toHaveLength(0)
+  })
+
+  it('restores an orphaned remote assignment with its exact stored semantics until rollover', () => {
+    const orphan = createQuestDefinition({
+      id: 'remote_characters_2',
+      copy: '캐릭터 두 종류 만나기',
+      event: 'WEAPON_USED',
+      target: 2,
+    })
+    const assigned = coordinator({
+      catalog: { version: 6, quests: [orphan] },
+    }).progress.state
+    const restored = parseProgress(
+      JSON.parse(JSON.stringify(assigned)) as unknown,
+      KNOWN_WEAPON_IDS,
+      KNOWN_MOVE_IDS
+    )
+    const { progress } = coordinator({
+      state: restored,
+      catalog: targetsCatalog,
+      deferDailyAssignment: true,
+    })
+
+    expect(progress.state.daily.quest).toEqual({
+      copy: '캐릭터 두 종류 만나기',
+      event: 'WEAPON_USED',
+      distinct: 'weaponId',
+    })
+    expect(progress.setCatalog(targetsCatalog)).toBe(true)
+    expect(makeRecordBookView(progress.state, progress.questCatalog).daily.copy)
+      .toBe('캐릭터 두 종류 만나기')
+    progress.dispatch([
+      {
+        type: 'ATTACK_RESOLVED', source: 'user', actionId: 71, targetRunId: 9,
+        weaponId: 'cinnamoroll', moveId: 'cloudBounce', detached: 3,
+      },
+      {
+        type: 'WEAPON_USED', source: 'user', actionId: 71, targetRunId: 9,
+        weaponId: 'cinnamoroll',
+      },
+    ], 'actionEnd')
+    expect(progress.state.daily).toMatchObject({
+      questId: 'remote_characters_2', target: 2, progress: 1,
+      distinctIds: ['cinnamoroll'],
+    })
+
+    expect(progress.ensureDailyQuest('2026-07-18')).toBe(true)
+    expect(progress.state.daily.questId).toBe('targets_3')
+  })
+
+  it('replays bounded pre-catalog evidence into the resolved daily without duplicate side effects', () => {
+    const track = vi.fn()
+    const notify = vi.fn()
+    const { progress, store } = coordinator({
+      deferDailyAssignment: true,
+      analytics: { track },
+      notify,
+    })
+
+    progress.dispatch(actionEvents(81, 10), 'targetDestroy')
+    const trackedBeforeResolution = track.mock.calls.length
+    expect(progress.state.daily.questId).toBe('')
+    expect(progress.state.lifetime).toMatchObject({ validHits: 1, totalTargets: 1 })
+    expect(store.saves.map((save) => save.reason)).toEqual(['targetDestroy'])
+
+    expect(progress.setCatalog(targetsCatalog)).toBe(true)
+    expect(progress.ensureDailyQuest('2026-07-17')).toBe(true)
+    expect(progress.state.daily).toMatchObject({ questId: 'targets_3', progress: 1 })
+    expect(progress.state.lifetime).toMatchObject({ validHits: 1, totalTargets: 1 })
+    expect(progress.state.byWeapon.hammer).toMatchObject({ uses: 1, finishes: 1 })
+    expect(track).toHaveBeenCalledTimes(trackedBeforeResolution)
+    expect(store.saves.map((save) => save.reason))
+      .toEqual(['targetDestroy', 'dailyRollover'])
+    expect(notify.mock.calls.filter(([notice]) => notice.kind === 'quest')).toHaveLength(1)
+
+    expect(progress.ensureDailyQuest('2026-07-17')).toBe(false)
+    expect(track).toHaveBeenCalledTimes(trackedBeforeResolution)
+    expect(store.saves).toHaveLength(2)
+    expect(notify.mock.calls.filter(([notice]) => notice.kind === 'quest')).toHaveLength(1)
+  })
+
+  it('discards pre-catalog daily evidence when resolved gamification is closed', () => {
+    const notify = vi.fn()
+    const { progress } = coordinator({ deferDailyAssignment: true, notify })
+    progress.dispatch(actionEvents(91, 11), 'targetDestroy', { gamificationEnabled: false })
+    progress.setCatalog(targetsCatalog)
+
+    expect(progress.ensureDailyQuest('2026-07-17', { gamificationEnabled: false })).toBe(true)
+    expect(progress.state.daily).toMatchObject({ questId: 'targets_3', progress: 0 })
+    expect(notify.mock.calls.filter(([notice]) => notice.kind === 'quest')).toHaveLength(0)
   })
 
   it('rolls an open session at the KST 04:00 boundary before the next event exactly once', () => {
@@ -624,6 +720,21 @@ describe('ActionCheckpointBatcher', () => {
 
     expect(dispatch).toHaveBeenCalledTimes(1)
     expect(dispatch).toHaveBeenNthCalledWith(1, [attack, used], 'actionEnd')
+  })
+
+  it('does not lose destroy attribution when an injected scheduler runs synchronously', () => {
+    const dispatch = vi.fn()
+    const batcher = new ActionCheckpointBatcher({
+      dispatch,
+      schedule: (run) => run(),
+    })
+
+    batcher.recordSettlement(identity, [used])
+    batcher.recordImpact(identity, [attack, combo])
+    batcher.recordDestroy(identity, destroyed)
+
+    expect(dispatch.mock.calls.flatMap(([events]) => events)).toContainEqual(destroyed)
+    expect(dispatch.mock.calls.some(([, reason]) => reason === 'targetDestroy')).toBe(true)
   })
 })
 

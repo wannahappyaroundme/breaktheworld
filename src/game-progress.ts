@@ -4,10 +4,16 @@ import {
   assignDailyQuest,
   createQuestDefinition,
   dailyNoticeTransitions,
+  questFromSnapshot,
   unlockAchievements,
   type QuestCatalogSnapshot,
 } from './progress/catalog'
-import type { EventSource, GameEvent, ProgressTargetId } from './progress/events'
+import {
+  isCharacterWeaponId,
+  type EventSource,
+  type GameEvent,
+  type ProgressTargetId,
+} from './progress/events'
 import { reduceProgress } from './progress/reducer'
 import type {
   CheckpointReason,
@@ -26,6 +32,7 @@ import type {
 } from './combat/action-controller'
 
 const RECENT_EVENT_LIMIT = 128
+const PENDING_DAILY_COUNT_LIMIT = 100
 
 export const KNOWN_WEAPON_IDS = [
   ...Object.keys(ELEMENTAL_CHARGE),
@@ -100,6 +107,10 @@ export class GameProgressCoordinator {
   private readonly store: ProgressPersistence
   private catalog: QuestCatalogSnapshot
   private assignmentCatalog: QuestCatalogSnapshot
+  private currentDayKey: string
+  private pendingDailyChargeReleases = 0
+  private pendingDailyTargetDestroys = 0
+  private readonly pendingDailyCharacterIds = new Set<string>()
   private readonly nowIso: () => string
   private readonly notify: (notice: NotificationInput) => unknown
   private readonly analytics?: ProgressAnalyticsSink
@@ -113,6 +124,7 @@ export class GameProgressCoordinator {
     this.store = options.store
     this.catalog = options.catalog
     this.assignmentCatalog = options.catalog
+    this.currentDayKey = options.dayKey
     this.nowIso = options.nowIso
     this.notify = options.notify
     this.analytics = options.analytics
@@ -155,6 +167,7 @@ export class GameProgressCoordinator {
       return false
     }
     const assigned = this.catalog.quests.find((quest) => quest.id === this.state.daily.questId)
+      ?? questFromSnapshot(this.state.daily)
     const includesAssigned = normalized.some((quest) => quest.id === this.state.daily.questId)
     this.assignmentCatalog = { version: catalog.version, quests: normalized }
     this.catalog = assigned && !includesAssigned
@@ -165,11 +178,28 @@ export class GameProgressCoordinator {
   }
 
   /** Assigns the current play day once from the latest resolved catalog and checkpoints it. */
-  ensureDailyQuest(dayKey: string): boolean {
+  ensureDailyQuest(
+    dayKey: string,
+    options: ProgressDispatchOptions = {}
+  ): boolean {
+    this.currentDayKey = dayKey
     const next = assignDailyQuest(this.state, dayKey, this.assignmentCatalog)
     if (next === this.state) return false
-    this.state = next
+    this.state = options.gamificationEnabled === false
+      ? next
+      : this.replayPendingDailyEvidence(next)
+    if (options.gamificationEnabled === false) this.clearPendingDailyEvidence()
     this.catalog = this.assignmentCatalog
+    const transitions = options.gamificationEnabled === false
+      ? []
+      : dailyNoticeTransitions(next.daily, this.state.daily)
+    for (const transition of transitions) {
+      try {
+        this.notify(this.dailyNotice(transition))
+      } catch {
+        // The assigned progress remains authoritative without feedback rendering.
+      }
+    }
     this.store.save(this.state, 'dailyRollover')
     return true
   }
@@ -189,7 +219,18 @@ export class GameProgressCoordinator {
       if (key !== null && this.recentEventSet.has(key)) continue
 
       const previous = this.state
+      const hasCurrentDaily = (
+        previous.daily.dayKey === this.currentDayKey && previous.daily.questId !== ''
+      )
+      if (!hasCurrentDaily) this.rememberPendingDailyEvidence(event)
       let next = reduceProgress(previous, event, this.catalog)
+      if (!hasCurrentDaily) {
+        next = {
+          ...next,
+          lifetime: { ...next.lifetime, stamps: previous.lifetime.stamps },
+          daily: previous.daily,
+        }
+      }
       if (!gamificationEnabled) {
         next = {
           ...next,
@@ -344,12 +385,66 @@ export class GameProgressCoordinator {
     return {
       key: `daily:${this.state.daily.dayKey}:${this.state.daily.questId}:${transition}`,
       kind: 'quest',
-      text: `${quest?.copy ?? '오늘의 도전'}: ${suffix}`,
+      text: `${this.state.daily.quest?.copy ?? quest?.copy ?? '오늘의 도전'}: ${suffix}`,
     }
   }
 
   private noticeRank(kind: NotificationInput['kind']): number {
     return kind === 'record' ? 4 : kind === 'achievement' ? 3 : kind === 'quest' ? 2 : 1
+  }
+
+  private rememberPendingDailyEvidence(event: GameEvent): void {
+    if (event.type === 'CHARGE_RELEASED' && event.charge === 1) {
+      this.pendingDailyChargeReleases = Math.min(
+        this.pendingDailyChargeReleases + 1,
+        PENDING_DAILY_COUNT_LIMIT
+      )
+    } else if (event.type === 'TARGET_DESTROYED') {
+      this.pendingDailyTargetDestroys = Math.min(
+        this.pendingDailyTargetDestroys + 1,
+        PENDING_DAILY_COUNT_LIMIT
+      )
+    } else if (event.type === 'WEAPON_USED' && isCharacterWeaponId(event.weaponId)) {
+      this.pendingDailyCharacterIds.add(event.weaponId)
+    }
+  }
+
+  private replayPendingDailyEvidence(assigned: ProgressStateV1): ProgressStateV1 {
+    let state = assigned
+    let actionId = 1
+    const replay = (event: GameEvent) => {
+      const reduced = reduceProgress(state, event, this.assignmentCatalog)
+      state = {
+        ...state,
+        lifetime: { ...state.lifetime, stamps: reduced.lifetime.stamps },
+        daily: reduced.daily,
+      }
+    }
+    for (let count = 0; count < this.pendingDailyChargeReleases; count += 1) {
+      replay({
+        type: 'CHARGE_RELEASED', source: 'user', actionId: actionId++, targetRunId: 1,
+        weaponId: 'hammer', charge: 1,
+      })
+    }
+    for (const weaponId of this.pendingDailyCharacterIds) {
+      replay({
+        type: 'WEAPON_USED', source: 'user', actionId: actionId++, targetRunId: 1, weaponId,
+      })
+    }
+    for (let count = 0; count < this.pendingDailyTargetDestroys; count += 1) {
+      replay({
+        type: 'TARGET_DESTROYED', source: 'user', actionId: actionId++, targetRunId: 1,
+        weaponId: 'hammer', targetId: 'word', golden: false,
+      })
+    }
+    this.clearPendingDailyEvidence()
+    return state
+  }
+
+  private clearPendingDailyEvidence(): void {
+    this.pendingDailyChargeReleases = 0
+    this.pendingDailyTargetDestroys = 0
+    this.pendingDailyCharacterIds.clear()
   }
 }
 
@@ -375,6 +470,7 @@ interface ActionBatch {
   settled: boolean
   destroyed: boolean
   impactScheduled: boolean
+  positiveImpactSeen: boolean
 }
 
 export interface ActionCheckpointBatcherOptions {
@@ -397,7 +493,8 @@ export class ActionCheckpointBatcher {
   recordImpact(identity: ActionIdentity, events: readonly GameEvent[]): void {
     const batch = this.batch(identity)
     batch.impact.push(...events)
-    if (batch.settled && this.hasPositiveImpact(batch)) this.scheduleImpact(identity, batch)
+    if (this.hasPositiveImpact(batch)) batch.positiveImpactSeen = true
+    if (batch.settled && batch.positiveImpactSeen) this.scheduleImpact(identity, batch)
   }
 
   recordDestroy(identity: ActionIdentity, event: GameEvent): void {
@@ -405,7 +502,7 @@ export class ActionCheckpointBatcher {
     if (batch.destroyed) return
     batch.destroyed = true
     batch.impact.push(event)
-    if (batch.settled && this.hasPositiveImpact(batch)) this.scheduleImpact(identity, batch)
+    if (batch.settled && batch.positiveImpactSeen) this.scheduleImpact(identity, batch)
   }
 
   recordSettlement(identity: ActionIdentity, events: readonly GameEvent[]): void {
@@ -413,7 +510,7 @@ export class ActionCheckpointBatcher {
     if (batch.settled) return
     batch.settled = true
     batch.settlement.push(...events)
-    if (!this.hasPositiveImpact(batch)) return
+    if (!batch.positiveImpactSeen) return
     this.dispatch(
       [...batch.impact, ...batch.settlement],
       batch.destroyed ? 'targetDestroy' : 'actionEnd'
@@ -428,6 +525,7 @@ export class ActionCheckpointBatcher {
     if (existing) return existing
     const created = {
       impact: [], settlement: [], settled: false, destroyed: false, impactScheduled: false,
+      positiveImpactSeen: false,
     }
     this.batches.set(key, created)
     this.order.push(key)
@@ -443,7 +541,9 @@ export class ActionCheckpointBatcher {
     batch.impactScheduled = true
     const flush = () => {
       batch.impactScheduled = false
-      if (!this.hasPositiveImpact(batch)) return
+      if (!batch.positiveImpactSeen || (batch.impact.length === 0 && batch.settlement.length === 0)) {
+        return
+      }
       const events = [...batch.impact, ...batch.settlement]
       batch.impact.length = 0
       batch.settlement.length = 0

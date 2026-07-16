@@ -77,7 +77,7 @@ export function makeRecordBookView(
   return {
     daily: {
       heading: '오늘의 도전',
-      copy: quest?.copy ?? '오늘의 도전을 골라보세요',
+      copy: state.daily.quest?.copy ?? quest?.copy ?? '오늘의 도전을 골라보세요',
       progress,
       target: state.daily.target,
       progressText: `${progress} / ${state.daily.target}`,

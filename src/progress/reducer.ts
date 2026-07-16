@@ -1,4 +1,8 @@
-import { BUILT_IN_CATALOG, type QuestCatalogSnapshot } from './catalog'
+import {
+  BUILT_IN_CATALOG,
+  questFromSnapshot,
+  type QuestCatalogSnapshot,
+} from './catalog'
 import { isCharacterWeaponId, type GameEvent } from './events'
 import type { ProgressStateV1, WeaponProgress } from './types'
 
@@ -152,7 +156,8 @@ function advanceDaily(
   const daily = state.daily
   if (daily.target === 0) return
 
-  const definition = catalog.quests.find((quest) => quest.id === daily.questId)
+  const definition = questFromSnapshot(daily)
+    ?? catalog.quests.find((quest) => quest.id === daily.questId)
   if (!definition) return
   if (definition.distinct === 'weaponId') normalizeDistinctDailyEvidence(daily)
   if (daily.completedAt !== null) return

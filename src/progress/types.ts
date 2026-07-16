@@ -6,6 +6,12 @@ export interface WeaponProgress {
   seenMoves: string[]
 }
 
+export interface DailyQuestSnapshot {
+  copy: string
+  event: 'CHARGE_RELEASED' | 'WEAPON_USED' | 'TARGET_DESTROYED'
+  distinct: 'weaponId' | null
+}
+
 export interface ProgressStateV1 {
   schemaVersion: 1
   catalogVersion: number
@@ -24,6 +30,7 @@ export interface ProgressStateV1 {
   daily: {
     dayKey: string
     questId: string
+    quest?: DailyQuestSnapshot
     target: number
     progress: number
     distinctIds: string[]

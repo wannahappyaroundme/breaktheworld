@@ -3,8 +3,11 @@ import { createDefaultProgress } from './defaults'
 import {
   ACHIEVEMENTS,
   BUILT_IN_CATALOG,
+  createQuestDefinition,
   findBuiltInQuest,
   isSafeQuestId,
+  isSafeQuestCopy,
+  questSnapshot,
   type QuestCatalogSnapshot,
 } from './catalog'
 import type { ProgressStateV1 } from './types'
@@ -138,7 +141,6 @@ function parseDaily(
   if (!isDayKey(input.dayKey)) return
 
   const builtInQuest = findBuiltInQuest(input.questId)
-  const quest = builtInQuest ?? catalog.quests.find((candidate) => candidate.id === input.questId)
   const storedTarget = counter(input.target)
   const hasValidStoredTarget = (
     storedTarget !== null
@@ -152,6 +154,35 @@ function parseDaily(
   state.daily.target = hasValidStoredTarget
     ? storedTarget!
     : builtInQuest!.target
+
+  const rawSnapshot = record(input.quest)
+  let storedQuest: ReturnType<typeof createQuestDefinition> | undefined
+  if (
+    rawSnapshot
+    && isSafeQuestCopy(rawSnapshot.copy)
+    && (
+      rawSnapshot.event === 'CHARGE_RELEASED'
+      || rawSnapshot.event === 'WEAPON_USED'
+      || rawSnapshot.event === 'TARGET_DESTROYED'
+    )
+    && (rawSnapshot.distinct === null || rawSnapshot.distinct === 'weaponId')
+  ) {
+    try {
+      const candidate = createQuestDefinition({
+        id: input.questId,
+        copy: rawSnapshot.copy,
+        event: rawSnapshot.event,
+        target: state.daily.target,
+      })
+      if ((candidate.distinct ?? null) === rawSnapshot.distinct) storedQuest = candidate
+    } catch {
+      // A malformed optional snapshot does not discard otherwise valid history.
+    }
+  }
+  const quest = builtInQuest
+    ?? storedQuest
+    ?? catalog.quests.find((candidate) => candidate.id === input.questId)
+  if (storedQuest) state.daily.quest = questSnapshot(builtInQuest ?? storedQuest)
 
   const storedProgress = counter(input.progress) ?? 0
   const validCompletedAt = isIsoTimestamp(input.completedAt) ? input.completedAt : null
