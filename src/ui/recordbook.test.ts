@@ -692,6 +692,8 @@ describe('RecordBook', () => {
 
     const gamificationSections = parent.querySelectorAll('[data-gamification]')
     expect(gamificationSections.every((section) => section.hidden)).toBe(true)
+    const cosmeticsPanel = byAttribute(parent, 'data-hub-panel', 'cosmetics')
+    expect(cosmeticsPanel.querySelector('.recordbook-panel-intro')?.hidden).toBe(true)
     expect(achievementsTab.disabled).toBe(true)
     expect(cosmeticsTab.disabled).toBe(false)
     expect(settingsTab.disabled).toBe(false)

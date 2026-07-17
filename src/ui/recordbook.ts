@@ -684,6 +684,7 @@ export class RecordBook {
     )
     const intro = this.doc.createElement('header')
     intro.className = 'recordbook-panel-intro'
+    intro.setAttribute('data-gamification', '')
     intro.append(
       textElement(this.doc, 'h3', view.cosmetics.heading),
       textElement(this.doc, 'p', '업적과 레벨로 받은 모습을 골라보세요')
