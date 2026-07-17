@@ -11,7 +11,11 @@ import type {
   PlayerProgressOperationV1,
   SyncProgressState,
 } from '../../supabase/functions/_shared/player-sync-contract.ts'
-import { ACHIEVEMENT_CATALOG_PUBLISHED_AT } from '../../supabase/functions/_shared/achievement-catalog.ts'
+import {
+  ACHIEVEMENT_CATALOG_PUBLISHED_AT,
+  levelProgress,
+  totalAchievementXp,
+} from '../../supabase/functions/_shared/achievement-catalog.ts'
 
 const USER_ID = '71000000-0000-4000-8000-000000000001'
 const DEVICE_A = '72000000-0000-4000-8000-000000000001'
@@ -65,6 +69,49 @@ function operation(
       settings: {},
       ...delta,
     },
+  }
+}
+
+function multiDeviceOperations(): PlayerProgressOperationV1[] {
+  const oldPlayDay = '2026-04-16'
+  return [
+    operation(DEVICE_A, 1, OP_A1, {
+      validHits: 1_000,
+      chargedFinishers: 50,
+    }, oldPlayDay),
+    operation(DEVICE_B, 1, '73000000-0000-4000-8000-000000000101', {
+      totalTargets: 100,
+      bestCombo: 100,
+    }, oldPlayDay),
+    operation(DEVICE_A, 2, '73000000-0000-4000-8000-000000000002', {
+      byTarget: { word: 50, earth: 50, city: 50 },
+    }, oldPlayDay),
+    operation(DEVICE_B, 2, '73000000-0000-4000-8000-000000000102', {
+      settings: {
+        frameId: 'electric_night',
+        recordBookThemeId: 'electric_night',
+      },
+    }, oldPlayDay),
+    operation(DEVICE_A, 3, '73000000-0000-4000-8000-000000000003', {
+      settings: {
+        frameId: 'legend_crown',
+        recordBookThemeId: 'legend_crown',
+      },
+    }, oldPlayDay),
+  ]
+}
+
+function achievementProjection(state: SyncProgressState) {
+  const xp = totalAchievementXp(state)
+  return {
+    lifetime: state.lifetime,
+    byWeapon: state.byWeapon,
+    byTarget: state.byTarget,
+    achievementIds: Object.keys(state.achievements).sort(),
+    xp,
+    level: levelProgress(xp).level,
+    frameId: state.profile.frameId,
+    recordBookThemeId: state.profile.recordBookThemeId,
   }
 }
 
@@ -349,6 +396,86 @@ describe('player sync handler', () => {
     const repeated = await handler(request({ operations: [] }))
     expect(repeated.status).toBe(200)
     expect(value.dependencies.compareAndSwapProgress).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps achievement XP and cosmetics deterministic across multi-device persisted batches', async () => {
+    const drafts = multiDeviceOperations()
+    expect(drafts.filter(({ deviceId }) => deviceId === DEVICE_A).map(({ clientSeq }) => clientSeq))
+      .toEqual([1, 2, 3])
+    expect(drafts.filter(({ deviceId }) => deviceId === DEVICE_B).map(({ clientSeq }) => clientSeq))
+      .toEqual([1, 2])
+    expect(drafts[3].delta.settings).toEqual({
+      frameId: 'electric_night',
+      recordBookThemeId: 'electric_night',
+    })
+
+    const accepted = drafts.map((item, index) => ({
+      ...item,
+      acceptedOrder: index + 1,
+      acceptedAt: new Date(Date.parse(NOW) + index * 1_000).toISOString(),
+    }))
+    const allAtOnce = setup({
+      initialAcknowledged: { [DEVICE_A]: 3, [DEVICE_B]: 2 },
+      initialOperations: accepted,
+    })
+    const allResponse = await createPlayerSyncHandler(allAtOnce.dependencies)(request({
+      deviceId: DEVICE_A,
+      previousSeq: 3,
+      operations: [],
+    }))
+    expect(allResponse.status).toBe(200)
+    const allState = (await json(allResponse)).state as SyncProgressState
+
+    const persisted = setup()
+    const batches = [
+      { deviceId: DEVICE_A, previousSeq: 0, operations: [drafts[0]] },
+      { deviceId: DEVICE_B, previousSeq: 0, operations: [drafts[1]] },
+      { deviceId: DEVICE_A, previousSeq: 1, operations: [drafts[2]] },
+      { deviceId: DEVICE_B, previousSeq: 1, operations: [drafts[3]] },
+      { deviceId: DEVICE_A, previousSeq: 2, operations: [drafts[4]] },
+    ]
+    for (const [index, batch] of batches.entries()) {
+      const response = await createPlayerSyncHandler(persisted.dependencies)(request(batch))
+      expect(response.status).toBe(200)
+      expect(persisted.getProgress().lastOperationId).toBe(index + 1)
+    }
+    const reloadedResponse = await createPlayerSyncHandler(persisted.dependencies)(request({
+      deviceId: DEVICE_A,
+      previousSeq: 3,
+      operations: [],
+    }))
+    expect(reloadedResponse.status).toBe(200)
+    const reloadedState = (await json(reloadedResponse)).state as SyncProgressState
+
+    const expected = {
+      lifetime: {
+        validHits: 1_000,
+        chargedFinishers: 50,
+        totalTargets: 100,
+        bestCombo: 100,
+        stamps: 0,
+        distinctWeaponIds: [],
+      },
+      byWeapon: {},
+      byTarget: {
+        word: { destroys: 50 },
+        earth: { destroys: 50 },
+        city: { destroys: 50 },
+      },
+      achievementIds: [
+        'first_hit', 'hits_100', 'hits_1000',
+        'first_destroy', 'destroys_25', 'destroys_100',
+        'charge_1', 'charge_master', 'charge_50',
+        'combo_10', 'combo_50', 'combo_100',
+        'world_cycle', 'world_10_each', 'world_50_each',
+      ].sort(),
+      xp: 1_750,
+      level: 11,
+      frameId: 'electric_night',
+      recordBookThemeId: 'electric_night',
+    }
+    expect(achievementProjection(allState)).toEqual(expected)
+    expect(achievementProjection(reloadedState)).toEqual(expected)
   })
 
   it('filters a matching accepted prefix and sends only the contiguous remainder', async () => {

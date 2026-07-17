@@ -5,8 +5,6 @@ import type { ProgressStateV1 } from '../progress/types'
 import {
   ACHIEVEMENT_CATALOG,
   ACHIEVEMENT_CATALOG_PUBLISHED_AT,
-  levelProgress,
-  totalAchievementXp,
 } from '../../supabase/functions/_shared/achievement-catalog'
 import {
   applyPendingPlayerOperation,
@@ -281,54 +279,6 @@ describe('player sync contract', () => {
 
   it('uses one dependency-free achievement catalog across server and client modules', () => {
     expect(ACHIEVEMENTS.map(({ next, ...definition }) => definition)).toEqual(ACHIEVEMENT_CATALOG)
-  })
-
-  it('is deterministic across 200 bounded multi-device operation lists and batch groupings', () => {
-    let random = 0x12345678
-    const nextRandom = () => {
-      random = (Math.imul(random, 1664525) + 1013904223) >>> 0
-      return random
-    }
-
-    for (let sample = 0; sample < 200; sample += 1) {
-      const list = Array.from({ length: 4 + (nextRandom() % 9) }, (_, index) => accepted({
-        validHits: index === 0 ? 100 : nextRandom() % 5,
-        chargedFinishers: index === 0 ? 10 : nextRandom() % 3,
-        totalTargets: nextRandom() % 2,
-        bestCombo: nextRandom() % 100,
-        addDistinctWeaponIds: nextRandom() % 2 === 0 ? ['hammer'] : ['cat'],
-        settings: index === 0 ? { frameId: 'first_crack' } : {},
-      }, {
-        deviceId: index % 2 === 0
-          ? DEVICE_ID
-          : '66666666-6666-4666-8666-666666666666',
-        operationId: `${String(sample + 1).padStart(8, '0')}-${String(index + 1).padStart(4, '0')}-4000-8000-${String(sample * 20 + index + 1).padStart(12, '0')}`,
-        clientSeq: index + 1,
-        acceptedOrder: index + 1,
-        acceptedAt: new Date(Date.parse(SERVER_NOW) + index * 1_000).toISOString(),
-      }))
-      const applyGroups = (groups: AcceptedPlayerProgressOperationV1[][]) => groups.reduce(
-        (state, group) => group.reduce(
-          (groupState, item) => applyPlayerOperation(groupState, item),
-          state,
-        ),
-        zero(),
-      )
-      const whole = applyGroups([list])
-      const split = applyGroups([list.slice(0, 1), list.slice(1, 3), list.slice(3)])
-      const projection = (state: SyncProgressState) => ({
-        lifetime: state.lifetime,
-        byWeapon: state.byWeapon,
-        byTarget: state.byTarget,
-        achievementIds: Object.keys(state.achievements).sort(),
-        xp: totalAchievementXp(state),
-        level: levelProgress(totalAchievementXp(state)).level,
-        frameId: state.profile.frameId,
-        recordBookThemeId: state.profile.recordBookThemeId,
-      })
-      expect(projection(split)).toEqual(projection(whole))
-      expect(projection(applyGroups(list.map((item) => [item])))).toEqual(projection(whole))
-    }
   })
 
   it('uses the publication epoch when existing counters are catalog-backfilled', () => {
