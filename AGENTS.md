@@ -7,9 +7,9 @@
 - Production: `https://wannahappyaroundme.github.io/breaktheworld/`
 - Admin: `https://wannahappyaroundme.github.io/breaktheworld/admin.html`
 - Backend: Supabase project `breaktheworld`, ref `ohvkunouhcxbnfjhhuih`, Seoul region.
-- Release state: gamification, character variants, analytics, first-entry guest/profile choice, cross-device profile sync, and operator player management are merged and deployed.
+- Release state: 32-achievement XP/level progression, cosmetic rewards, full-screen record book, unified game/profile UI, analytics, first-entry choice, cross-device sync, and operator management are merged and deployed.
 - All 6 production feature flags are enabled. One active owner exists; credentials are never documented.
-- Next product gate: future My Page, achievement titles, and achievement avatar rewards require a new approved design and plan before code.
+- Next product gate: a full My Page, new avatar-art rewards, or any social/competitive progression requires a new approved design and plan before code.
 
 ## Product
 
@@ -22,7 +22,8 @@ Personal, non-commercial, mobile-first stress-relief web game. Target users want
 - Input state machine: tap, drag, hold/charge, release-to-fire, cancellation safety, and double-tap strong-attack accessibility option.
 - Character partial moves/signatures, bounded seeded variation, and max-3-valid-action finish invariant.
 - Combo/best combo, FEVER, golden targets, haptics, share card, what's-new modal, PWA.
-- Versioned `btw.progress.v1`, legacy migration, one daily quest, 5 permanent stamps, record-book sheet, queued notifications.
+- Versioned `btw.progress.v1`, legacy migration, one daily quest, 32 public achievements across four tiers/categories, derived 4,700 XP and 20 levels, queued notifications.
+- Full-screen record book exposes all locked conditions/rewards from first visit; home summary, filters, progress, eight achievement titles, four earned frames, three earned themes, and legacy character skins are supported.
 - Guest-first profiles: globally unique 2-12 Hangul/ASCII/digit ID, ASCII case-insensitive comparison, explicit duplicate check, exact 6-digit numeric PIN.
 - An undecided device must choose create/login/guest before play. Exact local marker `btw.profileEntry.v1=guest` skips later prompts; valid sessions and forced PIN change outrank it, and logout clears it.
 - New profiles start at zero. Guest progress stays device-local and is never imported.
@@ -32,7 +33,7 @@ Personal, non-commercial, mobile-first stress-relief web game. Target users want
 
 ### Explicit non-goals
 
-Leaderboards, PvP, XP/levels, currency/store/energy, punitive streaks, new characters/targets, native app, monetization, player email/phone, social login, guest-record import, public profiles, and a full My Page are outside the deployed release.
+Leaderboards, PvP, currency/store/energy, punitive streaks, new characters/targets, new avatar art, native app, monetization, player email/phone, social login, guest-record import, public profiles, and a full My Page are outside the deployed release.
 
 ## Architecture
 
@@ -77,7 +78,7 @@ src/analytics/              privacy-limited event mapping and transport
 src/player/                 profile UI/API, privacy, auth, outbox, sync client/store
 src/admin/                  operator application, API, view, styles
 src/ui/                     HUD, record book, notifications, what's new, share card
-supabase/migrations/        four deployed SQL migrations
+supabase/migrations/        five deployed SQL migrations
 supabase/functions/         five deployed Edge Functions plus shared handlers
 supabase/tests/             pgTAP security/data tests
 docs/superpowers/specs/     approved product/design specs
@@ -99,7 +100,7 @@ dist/                       generated build; never hand-edit
 - Operations: `admin_users`, `quest_catalog`, `feature_flags`, `analytics_events`, `analytics_rate_limits`, `analytics_daily` view.
 - Player auth: `player_profiles`, `player_auth_aliases`, `player_auth_rate_limits`, `admin_audit_logs`.
 - Player sync: `player_progress`, `player_devices`, `player_sync_operations`, `player_daily_assignments`, `player_daily_completions`, `player_sync_rate_limits`.
-- Four migrations are deployed: operations, player auth, player sync, authenticated feature flags.
+- Five migrations are deployed: operations, player auth, player sync, authenticated feature flags, authoritative achievement progress/analytics.
 - Five active Edge Functions: `ingest-analytics`, `manage-admin`, `manage-player`, `player-auth`, `player-sync`.
 - Hourly cron cleanup runs for player auth and sync rate-limit buckets.
 
@@ -126,7 +127,9 @@ RLS centrally checks `admin_users`. The browser receives only the Supabase URL a
 ## UI and Copy
 
 - Mobile portrait first; target remains visually dominant.
-- `📖 기록책` is the single top entry for progress, profile, skins, and settings.
+- The top `LV` card is the single entry for progression, profile, cosmetics, and settings; it surfaces unseen-achievement count without crowding the target.
+- Record-book tabs are home, achievements, cosmetics, and settings. All 32 locked achievements disclose condition, progress, tier, XP, and title reward from first visit.
+- Profile entry/create/login surfaces reuse the game night-sky background and paper-card visual language.
 - Required first-entry profile choice precedes What's New and reuses the existing profile dialog; normal record-book profile behavior is unchanged.
 - Minimum interactive target 44px, semantic buttons, Korean accessible names, visible focus.
 - Full-screen effects are reserved for FEVER, records, and max-charge signatures.
@@ -135,12 +138,13 @@ RLS centrally checks `admin_users`. The browser receives only the Supabase URL a
 
 ## Release Evidence
 
-- GitHub Actions production run `29519482311` deployed commit `60d9abd` from `main` on 2026-07-17 KST.
-- CI passed copy lint, 706 Vitest tests across 48 files, TypeScript check, production build, and `npm audit --omit=dev --audit-level=high` with 0 vulnerabilities.
-- Local pgTAP suite passed 234 tests before backend deploy. Remote DB lint reported 0 errors.
-- Production game, admin HTML, game/admin/Supabase bundles returned HTTP 200. Latest sampled responses were 0.03-0.27s.
-- Production browser at 390x844 confirmed checking -> required create/login/guest choice before What's New, 44px actions, no overflow, and no warning/error logs. Local production-config preview confirmed guest choice -> What's New -> prompt-free reload and unchanged normal record-book profile behavior.
-- Supabase production verification: 4 migrations, 5 active functions, 6 enabled flags, active owner, duplicate-check endpoint response, and no observed 5xx.
+- GitHub Actions production run `29567381477` deployed commit `14b5cf5` from `main` on 2026-07-17 KST.
+- CI passed copy lint, 789 Vitest tests across 49 files, TypeScript check, production build, and `npm audit --omit=dev --audit-level=high` with 0 vulnerabilities.
+- Fresh local PostgreSQL reset applied all five migrations; pgTAP passed 254 tests and four Edge contract suites passed 57 tests. Remote `public` schema lint reported 0 errors.
+- Production game/admin HTML and all referenced game/admin/Supabase JS/CSS bundles returned HTTP 200 with the new deployment timestamp.
+- Production browser at 390x844 confirmed no horizontal overflow, exact 32-card achievement catalog, minimum 44px record-book/signup controls, unified signup/game backdrop, and no warning/error logs.
+- Supabase production verification: 5 migrations; all 5 functions ACTIVE; `ingest-analytics` and `player-sync` upgraded to version 2; 6 existing flags remain enabled.
+- Post-deploy observation sampled game/admin every 30 seconds for 5 minutes: all 10 pairs returned HTTP 200. Both changed Edge Functions returned the expected 401 security response to unauthenticated smoke requests; no 5xx was observed.
 
 Required future release gates: fresh tests/build/audit, migration and flag diff, preview signoff, real iOS Safari and Android Chrome smoke, production approval, live URL checks, and post-deploy observation.
 
@@ -151,6 +155,7 @@ Required future release gates: fresh tests/build/audit, migration and flag diff,
 - 2026-07-16: gamification, character variety, progress, operator dashboard, analytics, and player profile/sync designs approved and implemented.
 - 2026-07-17: Supabase operations/auth/sync backend and GitHub Pages frontend deployed to production; all release flags enabled.
 - 2026-07-17: first-entry guest/profile choice, same-device guest memory, logout re-choice, and deferred What's New deployed without backend changes.
+- 2026-07-17: 32-achievement catalog, 4,700 XP/20 levels, title/frame/theme rewards, authoritative sync/analytics, and full game/profile UI redesign deployed.
 
 ## Documentation Rule
 
