@@ -168,6 +168,7 @@ function setup(
     onAuthenticated?: () => void
     onLoggedOut?: () => void
     onClosed?: () => void
+    checkNameResult?: PlayerApiResult<boolean>
   } = {},
 ) {
   const doc = new FakeDocument()
@@ -212,8 +213,12 @@ function setup(
       nameCheck = { raw, normalizedKey: raw ? raw.toLowerCase() : null, status: 'idle' }
     }),
     checkName: vi.fn(async () => {
-      nameCheck = { ...nameCheck, status: 'available' }
-      return ok(true)
+      const result = options.checkNameResult ?? ok(true)
+      nameCheck = {
+        ...nameCheck,
+        status: result.ok ? (result.data ? 'available' : 'taken') : 'error',
+      }
+      return result
     }),
     create: vi.fn(async () => ok(PROFILE)),
     login: vi.fn(async () => ok(PROFILE)),
@@ -246,6 +251,12 @@ async function flushAsync(): Promise<void> {
   for (let index = 0; index < 6; index += 1) await Promise.resolve()
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((next) => { resolve = next })
+  return { promise, resolve }
+}
+
 beforeEach(() => { vi.useRealTimers() })
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
@@ -271,6 +282,22 @@ describe('PlayerProfileView', () => {
     expect(onGuestChosen).toHaveBeenCalledOnce()
     expect(view.isOpen).toBe(false)
     expect(recordBook.inert).toBe(false)
+  })
+
+  it('renders required choice as three equally legible game cards with a decorative brand mark', () => {
+    const { ui, view } = setup()
+
+    view.openRequired('choice')
+
+    const layer = ui.querySelector('.player-profile-layer')!
+    const brand = ui.querySelector('[data-player-brand]')!
+    expect(layer.getAttribute('data-profile-screen')).toBe('choice')
+    expect(brand.getAttribute('aria-hidden')).toBe('true')
+    expect(action(ui, 'create-start').classList.contains('player-choice-card')).toBe(true)
+    expect(action(ui, 'login-start').classList.contains('player-choice-card')).toBe(true)
+    expect(action(ui, 'guest-start').classList.contains('player-choice-card')).toBe(true)
+    expect(action(ui, 'login-start').textContent).toContain('프로필로 이어하기')
+    expect(action(ui, 'guest-start').textContent).toContain('이 기기에서 바로 놀기')
   })
 
   it('uses the same profile panel for the bounded checking state', () => {
@@ -391,6 +418,62 @@ describe('PlayerProfileView', () => {
     expect(action(ui, 'create-submit').disabled).toBe(true)
   })
 
+  it('shows all three create steps and preserves the ID beside an actionable field error', async () => {
+    const { ui, view } = setup(guest(), { checkNameResult: ok(false) })
+    view.open(null)
+    action(ui, 'create-start').click()
+    const id = ui.querySelector('[data-player-field="profile-name"]')!
+    id.value = '이미쓸ID'
+    id.dispatch('input')
+
+    action(ui, 'check-name').click()
+    await flushAsync()
+
+    const currentId = ui.querySelector('[data-player-field="profile-name"]')!
+    const steps = ui.querySelector('[aria-label="프로필 만들기 단계"]')!
+    const fieldMessageId = currentId.getAttribute('aria-describedby')
+    expect(ui.querySelector('.player-profile-layer')?.getAttribute('data-profile-screen')).toBe('create')
+    expect(steps.textContent).toContain('1 / 3ID')
+    expect(steps.textContent).toContain('2 / 3PIN')
+    expect(steps.textContent).toContain('3 / 3완료')
+    expect(steps.querySelector('[aria-current="step"]')?.textContent).toContain('1 / 3')
+    expect(currentId.value).toBe('이미쓸ID')
+    expect(fieldMessageId).not.toBeNull()
+    expect(ui.querySelector(`#${fieldMessageId}`)?.textContent)
+      .toContain('다른 ID를 입력하면 바로 이어갈 수 있어요')
+  })
+
+  it('keeps a stable busy label and form values while login is pending', async () => {
+    const pending = deferred<PlayerApiResult<PlayerProfile>>()
+    const { ui, controller, view } = setup()
+    controller.login.mockReturnValueOnce(pending.promise)
+    view.open(null)
+    action(ui, 'login-start').click()
+    const name = ui.querySelector('[data-player-field="profile-name"]')!
+    const pin = ui.querySelector('[data-player-field="pin"]')!
+    name.value = '예진'
+    pin.value = '024550'
+    name.dispatch('input')
+    pin.dispatch('input')
+
+    const submit = action(ui, 'login-submit')
+    submit.click()
+
+    expect(submit.textContent).toBe('로그인하는 중')
+    expect(submit.getAttribute('aria-busy')).toBe('true')
+    expect(submit.disabled).toBe(true)
+    expect(name.value).toBe('예진')
+    expect(pin.value).toBe('024550')
+
+    pending.resolve({
+      ok: false,
+      error: { code: 'login_failed', message: 'ID 또는 PIN을 다시 확인해 주세요.' },
+    })
+    await flushAsync()
+    expect(ui.querySelector('[data-player-field="profile-name"]')?.value).toBe('예진')
+    expect(ui.querySelector('[data-player-field="pin"]')?.value).toBe('024550')
+  })
+
   it('uses the one generic login error and allows PIN visibility without auto-submit', async () => {
     const { ui, controller, view } = setup()
     controller.login.mockResolvedValueOnce({
@@ -445,6 +528,21 @@ describe('PlayerProfileView', () => {
     expect(ui.textContent).toContain('기록 저장을 다시 확인해 주세요')
     action(ui, 'retry-save').click()
     expect(retry).toHaveBeenCalledOnce()
+  })
+
+  it('uses the approved next-action copy when a signed-in player is offline', () => {
+    const snapshot: PlayerAccountSnapshot = {
+      kind: 'player', profile: PROFILE, forcePinChange: false,
+      card: {
+        visible: true, kind: 'player', displayName: '예진', userId: PROFILE.userId,
+        sync: 'offline', lastSavedAt: null,
+      },
+    }
+    const { ui, view } = setup(snapshot)
+
+    view.open(null)
+
+    expect(ui.textContent).toContain('연결되면 기록을 맞춰 저장해요')
   })
 
   it('offers keep-local logout and continue-saving choices when flush has pending work', async () => {
@@ -503,6 +601,10 @@ describe('PlayerProfileView', () => {
     expect(css).toMatch(/\.player-profile-layer[\s\S]*position:\s*fixed/)
     expect(css).toMatch(/\.player-profile-layer button,[\s\S]*min-height:\s*44px/)
     expect(css).toMatch(/\.player-profile-layer input[\s\S]*font-size:\s*16px/)
+    expect(css).toMatch(/\.player-profile-panel[\s\S]*background:\s*var\(--paper-warm\)/)
+    expect(css).toMatch(/\.player-choice-card[\s\S]*min-height:\s*48px/)
+    expect(css).toMatch(/html\.reduce-motion[\s\S]*\.player-profile-panel/)
+    expect(css).toMatch(/@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*\.player-profile-panel/)
     expect(html).not.toContain('maximum-scale=1')
     expect(html).not.toContain('user-scalable=no')
   })

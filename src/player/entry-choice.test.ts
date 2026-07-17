@@ -37,6 +37,19 @@ describe('first-entry profile choice', () => {
     expect(store.isGuestRemembered()).toBe(false)
   })
 
+  it.each(['Guest', ' guest', 'guest ', 'player', 'true'])(
+    'does not treat %s as the guest marker',
+    (value) => {
+      const store = new PlayerEntryChoiceStore({
+        getItem: () => value,
+        setItem: () => undefined,
+        removeItem: () => undefined,
+      })
+
+      expect(store.isGuestRemembered()).toBe(false)
+    },
+  )
+
   it('continues in memory when browser storage throws', () => {
     const store = new PlayerEntryChoiceStore({
       getItem: () => { throw new Error('blocked') },

@@ -110,6 +110,16 @@ export class PlayerProfileView {
     const headingId = `player-profile-heading-${++profileHeadingId}`
     this.panel.setAttribute('aria-labelledby', headingId)
 
+    const brand = this.doc.createElement('div')
+    brand.className = 'player-profile-brand'
+    brand.setAttribute('data-player-brand', '')
+    brand.setAttribute('aria-hidden', 'true')
+    brand.append(
+      element(this.doc, 'span', '', 'player-profile-brand-burst'),
+      element(this.doc, 'span', '세상', 'player-profile-brand-word'),
+      element(this.doc, 'span', '부수기', 'player-profile-brand-tag'),
+    )
+
     const header = this.doc.createElement('header')
     header.className = 'player-profile-header'
     this.heading = element(this.doc, 'h1', '프로필')
@@ -124,9 +134,10 @@ export class PlayerProfileView {
     this.body = this.doc.createElement('div')
     this.body.className = 'player-profile-body'
     this.live = element(this.doc, 'p', '', 'player-profile-live')
+    this.live.id = `${headingId}-status`
     this.live.setAttribute('aria-live', 'polite')
     this.live.setAttribute('aria-atomic', 'true')
-    this.panel.append(header, this.body, this.live)
+    this.panel.append(brand, header, this.body, this.live)
     this.layer.appendChild(this.panel)
     this.parent.appendChild(this.layer)
 
@@ -216,6 +227,7 @@ export class PlayerProfileView {
 
   private paint(): void {
     this.layer.setAttribute('data-player-screen', this.screen)
+    this.layer.setAttribute('data-profile-screen', this.visualScreen())
     this.closeButton.hidden = this.isBlocking()
     this.closeButton.disabled = this.isBlocking()
     this.live.textContent = this.error
@@ -231,12 +243,16 @@ export class PlayerProfileView {
 
   private renderStarting(): void {
     this.heading.textContent = '시작을 준비하고 있어요'
-    this.body.replaceChildren(element(
+    const lead = element(
       this.doc,
       'p',
       '프로필을 확인하는 중이에요.',
       'player-profile-lead',
-    ))
+    )
+    lead.setAttribute('role', 'status')
+    const gauge = element(this.doc, 'span', '', 'player-profile-crack-gauge')
+    gauge.setAttribute('aria-hidden', 'true')
+    this.body.replaceChildren(lead, gauge)
   }
 
   private renderGuest(): void {
@@ -249,8 +265,17 @@ export class PlayerProfileView {
         : '새 프로필에서 첫 기록부터 새로 쌓아요. 지금 게스트 기록은 이 기기에 그대로 남아요.',
       'player-profile-lead',
     )
-    const create = this.actionButton('새 프로필 만들기', 'create-start', true)
     const signupEnabled = this.snapshot.kind === 'guest' && this.snapshot.signupEnabled
+    const create = this.requiredEntry
+      ? this.choiceCard(
+        '새 프로필 만들기',
+        signupEnabled
+          ? '첫 기록부터 여러 기기에서 이어가요.'
+          : '새 프로필을 쓸 수 있을 때까지 로그인하거나 이 기기에서 바로 놀 수 있어요.',
+        'create-start',
+        true,
+      )
+      : this.actionButton('새 프로필 만들기', 'create-start', true)
     create.disabled = !signupEnabled
     create.addEventListener('click', () => {
       this.error = ''
@@ -258,7 +283,13 @@ export class PlayerProfileView {
       this.paint()
       this.body.querySelector<HTMLInputElement>('[data-player-field="profile-name"]')?.focus()
     })
-    const login = this.actionButton('내 프로필로 로그인', 'login-start')
+    const login = this.requiredEntry
+      ? this.choiceCard(
+        '프로필로 이어하기',
+        '내 프로필로 로그인해 저장한 기록을 이어가요.',
+        'login-start',
+      )
+      : this.actionButton('내 프로필로 로그인', 'login-start')
     login.addEventListener('click', () => {
       this.error = ''
       this.screen = 'login'
@@ -277,7 +308,11 @@ export class PlayerProfileView {
       this.body.replaceChildren(intro, create, login, note)
       return
     }
-    const guest = this.actionButton('게스트로 시작', 'guest-start')
+    const guest = this.choiceCard(
+      '이 기기에서 바로 놀기',
+      '게스트로 시작해 로그인 없이 이 기기에 기록해요.',
+      'guest-start',
+    )
     guest.addEventListener('click', () => {
       this.requiredEntry = false
       this.close()
@@ -292,6 +327,8 @@ export class PlayerProfileView {
     const form = this.doc.createElement('form')
     form.className = 'player-profile-form'
     form.addEventListener('submit', (event) => event.preventDefault())
+    const available = this.controller.nameCheck.status === 'available'
+    const steps = this.renderCreateSteps(available ? 2 : 1)
     const name = this.inputField('프로필 ID', 'profile-name', 'text')
     name.input.value = this.createForm.profileName || this.controller.nameCheck.raw
     name.input.autocomplete = 'username'
@@ -317,11 +354,13 @@ export class PlayerProfileView {
     )
     check.disabled = this.busy || this.controller.nameCheck.status === 'checking'
     const checkState = element(this.doc, 'p', this.nameCheckCopy(this.controller.nameCheck), 'player-profile-field-state')
+    checkState.id = `${this.heading.id}-name-state`
+    checkState.setAttribute('data-name-check', this.controller.nameCheck.status)
     checkState.setAttribute('aria-live', 'polite')
+    name.input.setAttribute('aria-describedby', checkState.id)
 
     const advanced = this.doc.createElement('div')
     advanced.className = 'player-profile-create-fields'
-    const available = this.controller.nameCheck.status === 'available'
     advanced.hidden = !available
     const zeroCopy = element(
       this.doc,
@@ -335,6 +374,8 @@ export class PlayerProfileView {
     confirmation.input.value = this.createForm.confirmation
     this.configurePin(pin.input)
     this.configurePin(confirmation.input)
+    pin.input.setAttribute('aria-describedby', this.live.id)
+    confirmation.input.setAttribute('aria-describedby', this.live.id)
     const show = this.actionButton(this.createForm.showPin ? 'PIN 숨기기' : 'PIN 보기', 'show-pin', false)
     show.addEventListener('click', () => {
       this.createForm.showPin = !this.createForm.showPin
@@ -371,8 +412,7 @@ export class PlayerProfileView {
       this.controller.editProfileName(name.input.value)
       this.busy = true
       this.error = ''
-      check.disabled = true
-      check.setAttribute('aria-busy', 'true')
+      this.setButtonBusy(check, '확인하는 중')
       const result = await this.controller.checkName()
       this.busy = false
       this.error = result.ok ? '' : exactError(result)
@@ -382,8 +422,7 @@ export class PlayerProfileView {
       updateSubmit()
       if (submit.disabled) return
       this.busy = true
-      submit.disabled = true
-      submit.setAttribute('aria-busy', 'true')
+      this.setButtonBusy(submit, '프로필 만드는 중')
       const result = await this.controller.create(
         this.createForm.profileName,
         this.createForm.pin,
@@ -395,7 +434,7 @@ export class PlayerProfileView {
       if (result.ok) this.finishAuthentication()
       else this.paint()
     })
-    form.append(name.label, check, checkState, advanced)
+    form.append(steps, name.label, check, checkState, advanced)
     this.body.replaceChildren(back, form)
   }
 
@@ -411,6 +450,8 @@ export class PlayerProfileView {
     pin.input.value = this.loginForm.pin
     name.input.autocomplete = 'username'
     this.configurePin(pin.input)
+    name.input.setAttribute('aria-describedby', this.live.id)
+    pin.input.setAttribute('aria-describedby', this.live.id)
     const show = this.actionButton(this.loginForm.showPin ? 'PIN 숨기기' : 'PIN 보기', 'show-pin', false)
     const submit = this.actionButton('로그인', 'login-submit', true)
     const update = () => {
@@ -431,8 +472,7 @@ export class PlayerProfileView {
       update()
       if (submit.disabled) return
       this.busy = true
-      submit.disabled = true
-      submit.setAttribute('aria-busy', 'true')
+      this.setButtonBusy(submit, '로그인하는 중')
       const result = await this.controller.login(this.loginForm.profileName, this.loginForm.pin)
       this.busy = false
       this.error = result.ok ? '' : 'ID 또는 PIN을 다시 확인해 주세요.'
@@ -454,6 +494,7 @@ export class PlayerProfileView {
     const avatarModel = profileAvatar(this.snapshot.profile.userId, this.snapshot.profile.displayName)
     const summary = this.doc.createElement('section')
     summary.className = 'player-profile-summary'
+    summary.setAttribute('data-sync-state', this.snapshot.card.kind === 'player' ? this.snapshot.card.sync : 'saved')
     const avatar = element(this.doc, 'span', avatarModel.initial, 'player-profile-avatar')
     avatar.setAttribute('aria-hidden', 'true')
     avatar.setAttribute('style', `background-color:${avatarModel.color}`)
@@ -479,8 +520,7 @@ export class PlayerProfileView {
     const logout = this.actionButton('로그아웃', 'logout')
     logout.addEventListener('click', async () => {
       this.busy = true
-      logout.disabled = true
-      logout.setAttribute('aria-busy', 'true')
+      this.setButtonBusy(logout, '로그아웃하는 중')
       const result = await this.controller.logout()
       this.busy = false
       this.error = exactError(result)
@@ -506,7 +546,7 @@ export class PlayerProfileView {
     switch (this.snapshot.card.sync) {
       case 'saved': return '기록이 저장됐어요'
       case 'saving': return '기록을 저장하는 중이에요'
-      case 'offline': return '인터넷에 연결되면 기록을 저장해요'
+      case 'offline': return '연결되면 기록을 맞춰 저장해요'
       case 'retry': return '기록 저장을 다시 확인해 주세요'
       case 'auth-expired': return '다시 로그인하면 보관한 기록을 이어서 저장해요'
       case 'memory': return '이 화면을 닫기 전까지 기록을 보관해요.'
@@ -521,7 +561,7 @@ export class PlayerProfileView {
     const continueSaving = this.actionButton('계속 저장하기', 'logout-continue', false)
     keep.addEventListener('click', async () => {
       this.busy = true
-      keep.disabled = true
+      this.setButtonBusy(keep, '로그아웃하는 중')
       const result = await this.controller.logout('keep-local')
       this.busy = false
       this.error = exactError(result)
@@ -558,6 +598,8 @@ export class PlayerProfileView {
     confirmation.input.value = this.forceForm.confirmation
     this.configurePin(pin.input)
     this.configurePin(confirmation.input)
+    pin.input.setAttribute('aria-describedby', this.live.id)
+    confirmation.input.setAttribute('aria-describedby', this.live.id)
     const show = this.actionButton(this.forceForm.showPin ? 'PIN 숨기기' : 'PIN 보기', 'show-pin', false)
     const submit = this.actionButton('새 PIN 저장', 'force-submit', true)
     const logout = this.actionButton('로그아웃하고 게스트로 돌아가기', 'force-logout', false)
@@ -580,8 +622,7 @@ export class PlayerProfileView {
       update()
       if (submit.disabled) return
       this.busy = true
-      submit.disabled = true
-      submit.setAttribute('aria-busy', 'true')
+      this.setButtonBusy(submit, '저장하는 중')
       const result = await this.controller.changePin(this.forceForm.pin, this.forceForm.confirmation)
       this.busy = false
       this.error = exactError(result)
@@ -590,7 +631,7 @@ export class PlayerProfileView {
     })
     logout.addEventListener('click', async () => {
       this.busy = true
-      logout.disabled = true
+      this.setButtonBusy(logout, '로그아웃하는 중')
       const result = await this.controller.logout()
       this.busy = false
       this.error = exactError(result)
@@ -640,6 +681,51 @@ export class PlayerProfileView {
     return button
   }
 
+  private choiceCard(
+    title: string,
+    detail: string,
+    action: string,
+    recommended = false,
+  ): HTMLButtonElement {
+    const button = this.actionButton('', action)
+    button.classList.add('player-choice-card')
+    if (recommended) button.classList.add('player-choice-recommended')
+    const mark = element(this.doc, 'span', '', 'player-choice-mark')
+    mark.setAttribute('aria-hidden', 'true')
+    const copy = element(this.doc, 'span', '', 'player-choice-copy')
+    if (recommended) copy.appendChild(element(this.doc, 'span', '처음이라면 추천', 'player-choice-kicker'))
+    copy.append(
+      element(this.doc, 'strong', title),
+      element(this.doc, 'span', detail),
+    )
+    button.append(mark, copy)
+    return button
+  }
+
+  private renderCreateSteps(current: 1 | 2 | 3): HTMLOListElement {
+    const steps = this.doc.createElement('ol')
+    steps.className = 'player-profile-steps'
+    steps.setAttribute('aria-label', '프로필 만들기 단계')
+    for (const [index, label] of ['ID', 'PIN', '완료'].entries()) {
+      const step = this.doc.createElement('li')
+      step.setAttribute('data-profile-step', String(index + 1))
+      if (index + 1 === current) step.setAttribute('aria-current', 'step')
+      step.append(
+        element(this.doc, 'span', `${index + 1} / 3`, 'player-profile-step-count'),
+        element(this.doc, 'span', label, 'player-profile-step-label'),
+      )
+      steps.appendChild(step)
+    }
+    return steps
+  }
+
+  private setButtonBusy(button: HTMLButtonElement, copy: string): void {
+    button.disabled = true
+    button.textContent = copy
+    button.setAttribute('aria-busy', 'true')
+    button.classList.add('player-profile-busy')
+  }
+
   private backButton(): HTMLButtonElement {
     const back = this.actionButton('뒤로', 'back', false)
     back.addEventListener('click', () => {
@@ -667,7 +753,7 @@ export class PlayerProfileView {
     switch (check.status) {
       case 'checking': return 'ID를 확인하는 중이에요'
       case 'available': return '사용할 수 있는 ID예요'
-      case 'taken': return '이미 사용 중인 ID예요. 다른 ID를 입력해 주세요.'
+      case 'taken': return '이 ID는 이미 사용 중이에요. 다른 ID를 입력하면 바로 이어갈 수 있어요.'
       case 'error': return '연결을 확인한 뒤 중복 확인을 다시 눌러 주세요.'
       default: return '한글, 영문, 숫자로 2자에서 12자로 입력해 주세요.'
     }
@@ -675,6 +761,12 @@ export class PlayerProfileView {
 
   private isForced(): boolean {
     return this.snapshot.kind === 'player' && this.snapshot.forcePinChange
+  }
+
+  private visualScreen(): RequiredEntryScreen | ProfileScreen {
+    if (this.requiredEntry && this.screen === 'guest') return 'choice'
+    if (this.screen === 'starting') return 'checking'
+    return this.screen
   }
 
   private isBlocking(): boolean {
