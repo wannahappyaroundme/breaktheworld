@@ -78,6 +78,9 @@ class FakeElement {
   readonly classList = new FakeClassList(this)
   readonly attributes = new Map<string, string>()
   readonly listeners = new Map<string, Listener[]>()
+  readonly style = {
+    setProperty: vi.fn(),
+  }
   parentElement: FakeElement | null = null
   hidden = false
   disabled = false
@@ -849,7 +852,7 @@ describe('RecordBook', () => {
 })
 
 describe('Hud record button and live notification renderer', () => {
-  it('keeps five named top buttons and routes the record button compatibly', () => {
+  it('keeps three named top controls and routes the level button compatibly', () => {
     const parent = fakeDocument.createElement('div')
     const onOpenRecordBook = vi.fn()
     const onWhatsNew = vi.fn()
@@ -865,13 +868,13 @@ describe('Hud record button and live notification renderer', () => {
 
     const buttons = parent.querySelector('.top-buttons')!.querySelectorAll('button')
     expect(parent.querySelector('.combo')!.querySelector('.label')!.textContent).toBe('연속')
-    expect(buttons).toHaveLength(5)
+    expect(buttons).toHaveLength(3)
     expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
-      '기록 카드 공유', '기록책 열기', '소리 끄기', '다음 타겟', '처음부터',
+      '기록책 열기, 현재 레벨 1', '소리 끄기', '게임 메뉴 열기',
     ])
-    expect(buttons.map((button) => button.textContent)).toEqual(['📸', '📖', '🔊', '⏭️', '🔄'])
+    expect(buttons[0].textContent).toContain('LV 1')
 
-    buttons[1].click()
+    buttons[0].click()
     expect(onOpenRecordBook).toHaveBeenCalledOnce()
     expect(onWhatsNew).not.toHaveBeenCalled()
   })

@@ -60,8 +60,12 @@ export class WeaponBar {
       const name = document.createElement('span')
       name.className = 'name'
       name.textContent = w.name
+      const stateMark = document.createElement('span')
+      stateMark.className = 'weapon-state-mark'
+      stateMark.setAttribute('aria-hidden', 'true')
       b.appendChild(icon)
       b.appendChild(name)
+      b.appendChild(stateMark)
 
       b.addEventListener('click', () => onSelect(w))
       // prevent the bar tap from also smashing the world

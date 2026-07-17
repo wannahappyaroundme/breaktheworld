@@ -95,6 +95,8 @@ describe('WeaponBar accessibility', () => {
     expect(button.getAttribute('aria-pressed')).toBe('false')
     expect(button.innerHTML).toBe('')
     expect(button.children[1].textContent).toBe('망치')
+    expect(button.children[2].className).toBe('weapon-state-mark')
+    expect(button.children[2].getAttribute('aria-hidden')).toBe('true')
 
     const pointerEvent = { stopPropagation: vi.fn() }
     const touchEvent = { stopPropagation: vi.fn() }
@@ -128,5 +130,20 @@ describe('WeaponBar accessibility', () => {
     )
     expect(weapons.filter((candidate) => isCharacterId(candidate.id)).map((candidate) => candidate.id))
       .toEqual(CHARACTER_IDS)
+  })
+
+  it('keeps the scrollable roster while names and states use accessible size and shape', async () => {
+    const { readFileSync } = await vi.importActual<{
+      readFileSync(path: URL, encoding: 'utf8'): string
+    }>('node:fs')
+    const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8')
+
+    expect(css).toMatch(/\.weapon-bar\s*\{[^}]*overflow-x:\s*auto/s)
+    expect(css).toMatch(/\.weapon\s+\.name\s*\{[^}]*font-size:\s*(?:1[2-9]|[2-9]\d)px/s)
+    expect(css).toMatch(
+      /\.weapon(?:\.selected|\[aria-pressed='true'\])[^{]*\{[^}]*border(?:-color)?:[^;]+;[^}]*box-shadow:[^;]+;/s
+    )
+    expect(css).toMatch(/\.weapon:active\s*\{[^}]*transform:[^;]+;/s)
+    expect(css).toMatch(/\.weapon:focus-visible\s*\{[^}]*outline:[^;]+;/s)
   })
 })

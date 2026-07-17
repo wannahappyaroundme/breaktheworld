@@ -107,6 +107,11 @@ body {
   flex-shrink: 0;
 }
 
+.hud-controls {
+  position: relative;
+  flex: 0 0 auto;
+}
+
 .icon-btn {
   width: 44px;
   height: 44px;
@@ -120,12 +125,192 @@ body {
   backdrop-filter: blur(8px);
   cursor: pointer;
   transition: transform 0.06s;
+  touch-action: manipulation;
 }
 .icon-btn:active {
   transform: scale(0.9);
 }
 .icon-btn:focus-visible {
   outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.hud-level-button {
+  --hud-level-ratio: 0;
+  position: relative;
+  width: auto;
+  min-width: 68px;
+  min-height: 44px;
+  grid-template-columns: auto auto;
+  column-gap: 4px;
+  overflow: visible;
+  padding: 5px 9px 8px;
+  border: 2px solid var(--smash-yellow);
+  border-radius: 13px 10px 14px 9px;
+  background: var(--paper-warm);
+  color: var(--ink-text);
+  box-shadow: 2px 3px 0 rgba(8, 11, 25, 0.7);
+}
+
+.hud-level-value {
+  font-size: 15px;
+  font-weight: 950;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.hud-level-detail {
+  max-width: 0;
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 850;
+  opacity: 0;
+  white-space: nowrap;
+  transition: max-width 0.18s ease, opacity 0.18s ease;
+}
+
+.hud-level-button.progress-gain .hud-level-detail {
+  max-width: 78px;
+  opacity: 1;
+}
+
+.hud-level-track {
+  position: absolute;
+  right: 7px;
+  bottom: 4px;
+  left: 7px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(32, 33, 51, 0.18);
+}
+
+.hud-level-track::after {
+  display: block;
+  width: calc(var(--hud-level-ratio) * 100%);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--impact-coral);
+  content: '';
+}
+
+.hud-unseen-badge {
+  position: absolute;
+  top: -7px;
+  right: -6px;
+  min-width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0 5px;
+  border: 2px solid var(--night-ink);
+  border-radius: 9px 11px 8px 10px;
+  background: var(--impact-coral);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.hud-unseen-badge[hidden],
+.hud-progress-feedback[hidden] {
+  display: none;
+}
+
+.hud-more-menu[hidden] {
+  display: none;
+  pointer-events: none;
+}
+
+.hud-sound-mark {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.hud-sound-mark::before {
+  position: absolute;
+  top: 5px;
+  left: 1px;
+  width: 6px;
+  height: 8px;
+  border-radius: 2px;
+  background: currentColor;
+  box-shadow: 5px 0 0 -1px currentColor;
+  content: '';
+}
+
+.hud-sound-mark::after {
+  position: absolute;
+  top: 3px;
+  right: 0;
+  width: 8px;
+  height: 12px;
+  border-right: 2px solid currentColor;
+  border-radius: 50%;
+  content: '';
+}
+
+.hud-sound-mark.muted::after {
+  top: 8px;
+  width: 10px;
+  height: 2px;
+  border: 0;
+  border-radius: 2px;
+  background: currentColor;
+  transform: rotate(-45deg);
+}
+
+.hud-more-mark {
+  width: 4px;
+  height: 4px;
+  display: block;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 -7px 0 currentColor, 0 7px 0 currentColor;
+}
+
+.hud-more-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 12;
+  width: min(184px, calc(100vw - 16px));
+  display: grid;
+  gap: 6px;
+  padding: 7px;
+  border: 2px solid var(--ink-text);
+  border-radius: 14px 11px 15px 10px;
+  background: var(--paper-warm);
+  box-shadow: var(--comic-shadow);
+}
+
+.hud-menu-item {
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 2px solid var(--ink-text);
+  border-radius: 10px 8px 11px 7px;
+  background: #fffdf4;
+  color: var(--ink-text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 850;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.hud-menu-item:active {
+  border-color: var(--impact-coral);
+  background: var(--smash-yellow);
+  box-shadow: inset 2px 2px 0 rgba(32, 33, 51, 0.24);
+  transform: translate(1px, 1px);
+}
+
+.hud-menu-item:focus-visible {
+  outline: 3px solid var(--electric-sky);
   outline-offset: 2px;
 }
 
@@ -150,6 +335,7 @@ body {
 }
 
 .weapon {
+  position: relative;
   flex: 0 0 auto;
   width: 60px;
   height: 70px;
@@ -193,21 +379,44 @@ body {
   height: 31px;
 }
 .weapon .name {
-  font-size: 9.5px;
-  opacity: 0.82;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  opacity: 0.92;
   white-space: nowrap;
 }
+.weapon-state-mark {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--ink-text);
+  border-radius: 3px 5px 2px 4px;
+  background: var(--smash-yellow);
+  opacity: 0;
+  transform: rotate(12deg);
+}
 .weapon:active {
-  transform: scale(0.9);
+  border-radius: 11px 16px 10px 15px;
+  border-color: var(--smash-yellow);
+  box-shadow: inset 2px 2px 0 rgba(255, 210, 63, 0.28);
+  transform: translate(1px, 2px);
 }
 .weapon:focus-visible {
-  outline: 3px solid #fff;
+  border-radius: 13px 18px 12px 17px;
+  outline: 3px solid var(--electric-sky);
   outline-offset: 3px;
 }
-.weapon.selected {
-  border-color: var(--accent);
+.weapon.selected,
+.weapon[aria-pressed='true'] {
+  border: 2px solid var(--smash-yellow);
+  border-radius: 13px 18px 12px 17px;
   background: rgba(255, 210, 63, 0.16);
-  box-shadow: 0 0 0 1px var(--accent), 0 6px 20px rgba(255, 210, 63, 0.25);
+  box-shadow: 3px 4px 0 rgba(255, 210, 63, 0.58), 0 8px 18px rgba(0, 0, 0, 0.22);
+}
+.weapon[aria-pressed='true'] .weapon-state-mark {
+  opacity: 1;
 }
 
 /* ===== tap hint ===== */
@@ -312,6 +521,100 @@ html.reduce-motion .whatsnew .ok-btn:active {
   color: #ffe9a8;
   margin-top: 4px;
   opacity: 0.9;
+}
+
+.hud-progress-feedback {
+  position: absolute;
+  top: max(62px, calc(env(safe-area-inset-top) + 54px));
+  right: 102px;
+  z-index: 9;
+  min-width: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 7px 10px;
+  border: 2px solid var(--smash-yellow);
+  border-radius: 13px 9px 14px 10px;
+  background: var(--paper-warm);
+  color: var(--ink-text);
+  box-shadow: 2px 3px 0 rgba(8, 11, 25, 0.72);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.2;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-74px, 48px) scale(0.82);
+}
+
+.hud-progress-feedback.show {
+  animation: hudProgressGain 0.8s cubic-bezier(0.2, 0.8, 0.25, 1) both;
+}
+
+.hud-progress-feedback.level-up {
+  border-color: var(--impact-coral);
+  box-shadow: 3px 4px 0 rgba(255, 107, 107, 0.52);
+}
+
+.hud-xp-value,
+.hud-level-up {
+  white-space: nowrap;
+}
+
+.hud-level-up {
+  color: #8d2e3d;
+}
+
+.hud-xp-fragment {
+  position: absolute;
+  top: 50%;
+  right: calc(-7px - var(--fragment-index) * 5px);
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--ink-text);
+  border-radius: 2px 4px 2px 3px;
+  background: var(--smash-yellow);
+  animation: hudXpFragment 0.65s ease-out both;
+  animation-delay: calc(var(--fragment-index) * 45ms);
+  transform: rotate(calc(12deg + var(--fragment-index) * 17deg));
+}
+
+.hud-level-button.progress-gain {
+  outline: 3px solid var(--smash-yellow);
+  outline-offset: 2px;
+}
+
+.hud-level-button.level-up {
+  outline-color: var(--impact-coral);
+}
+
+@keyframes hudProgressGain {
+  0% {
+    opacity: 0;
+    transform: translate(-74px, 48px) scale(0.82);
+  }
+  25%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(18px, -12px) scale(0.92);
+  }
+}
+
+@keyframes hudXpFragment {
+  0% {
+    opacity: 0;
+    transform: translate(-18px, 20px) rotate(0);
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(14px, -18px) rotate(44deg);
+  }
 }
 
 .hud-notice {
@@ -721,6 +1024,20 @@ html.reduce-motion .whatsnew .ok-btn:active {
     gap: 3px;
   }
 
+  .hud-level-button {
+    min-width: 62px;
+    padding-inline: 7px;
+  }
+
+  .hud-level-value {
+    font-size: 14px;
+  }
+
+  .hud-progress-feedback {
+    right: 82px;
+    max-width: calc(100vw - 96px);
+  }
+
   .combo .n {
     font-size: 30px;
   }
@@ -744,11 +1061,47 @@ html.reduce-motion .whatsnew .ok-btn:active {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .hud-progress-feedback {
+    animation: none !important;
+    opacity: 1;
+    outline: 3px solid var(--smash-yellow);
+    outline-offset: 2px;
+    transform: none !important;
+  }
+
+  .hud-xp-fragment {
+    display: none;
+    animation: none !important;
+    transform: none !important;
+  }
+
+  .hud-level-detail {
+    transition: none !important;
+  }
+
   .hud-notice,
   .recordbook-backdrop,
   .recordbook-sheet {
     transition: none !important;
   }
+}
+
+html.reduce-motion .hud-progress-feedback {
+  animation: none !important;
+  opacity: 1;
+  outline: 3px solid var(--smash-yellow);
+  outline-offset: 2px;
+  transform: none !important;
+}
+
+html.reduce-motion .hud-xp-fragment {
+  display: none;
+  animation: none !important;
+  transform: none !important;
+}
+
+html.reduce-motion .hud-level-detail {
+  transition: none !important;
 }
 
 /* Full-screen midnight sticker arcade hub. */
