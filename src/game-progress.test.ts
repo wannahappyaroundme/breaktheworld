@@ -1065,7 +1065,7 @@ describe('Game progression UI integration', () => {
     state.achievements[unlocked[0]].seen = false
     state.achievements[unlocked[1]].seen = false
     let stateReads = 0
-    const hud = { setBest: vi.fn(), setProgress: vi.fn() }
+    const hud = { setBest: vi.fn(), setProgress: vi.fn(), setGamificationVisible: vi.fn() }
     const recordBook = { render: vi.fn(), setGamificationVisible: vi.fn() }
     const game = Object.create(Game.prototype) as any
     game.progress = {
@@ -1075,6 +1075,7 @@ describe('Game progression UI integration', () => {
     game.hud = hud
     game.recordBook = recordBook
     game.remoteConfig = { active: { gamification_enabled: true, player_profiles_ui: false } }
+    game.questCatalogResolved = true
     game.playerAccount = { kind: 'guest', signupEnabled: false, card: { visible: false, kind: 'hidden' } }
     game.profileCard = () => ({ visible: false, kind: 'hidden' })
 
@@ -1095,6 +1096,7 @@ describe('Game progression UI integration', () => {
       levelRatio: 0,
     })
     expect(recordBook.setGamificationVisible).toHaveBeenCalledWith(true)
+    expect(hud.setGamificationVisible).toHaveBeenCalledWith(true)
   })
 
   it('uses the exact accepted transition for HUD gain and telemetry without letting either fail gameplay', () => {
@@ -1139,7 +1141,10 @@ describe('Game progression UI integration', () => {
       gamificationFor: vi.fn(() => false),
     }
     game.playerAccount = { kind: 'guest', signupEnabled: false, card: { visible: false, kind: 'hidden' } }
-    game.hud = { setBest: vi.fn(), setProgress: vi.fn(), showProgressGain: vi.fn(), toast: vi.fn() }
+    game.hud = {
+      setBest: vi.fn(), setProgress: vi.fn(), setGamificationVisible: vi.fn(),
+      showProgressGain: vi.fn(), toast: vi.fn(),
+    }
     game.recordBook = { render: vi.fn(), setGamificationVisible: vi.fn() }
     game.analytics = {
       trackQuestTransition: vi.fn(), trackAchievementUnlock: vi.fn(), trackLevelReached: vi.fn(),
@@ -1155,12 +1160,43 @@ describe('Game progression UI integration', () => {
     game.dispatch([actionEvents()[0]], 'actionEnd')
     game.trackProfileStep('choice')
 
-    expect(game.hud.setProgress).not.toHaveBeenCalled()
+    expect(game.hud.setProgress).toHaveBeenCalledWith(expect.objectContaining({
+      level: 1,
+      xp: 0,
+      unseen: 0,
+    }))
+    expect(game.hud.setGamificationVisible).toHaveBeenCalledWith(false)
     expect(game.hud.showProgressGain).not.toHaveBeenCalled()
     expect(game.analytics.trackAchievementUnlock).not.toHaveBeenCalled()
     expect(game.analytics.trackLevelReached).not.toHaveBeenCalled()
     expect(game.analytics.trackProfileStep).not.toHaveBeenCalled()
     expect(state).toEqual(createDefaultProgress('closed-game-ui'))
+  })
+
+  it('keeps both progress surfaces closed until config resolves and opens built-in fallback', async () => {
+    const hud = { setGamificationVisible: vi.fn() }
+    const recordBook = { setGamificationVisible: vi.fn() }
+    const game = Object.create(Game.prototype) as any
+    game.questCatalogResolved = false
+    game.remoteConfig = { active: { gamification_enabled: true } }
+    game.hud = hud
+    game.recordBook = recordBook
+
+    game.applyGamificationVisibility()
+    expect(hud.setGamificationVisible).toHaveBeenLastCalledWith(false)
+    expect(recordBook.setGamificationVisible).toHaveBeenLastCalledWith(false)
+
+    game.progress = { setCatalog: vi.fn(() => true) }
+    game.ensureCurrentDay = vi.fn(() => false)
+    game.refreshProgressUI = vi.fn(() => game.applyGamificationVisibility())
+    await expect(game.loadRemoteConfig({
+      loadConfig: vi.fn(async () => { throw new Error('offline') }),
+    })).resolves.toBe('builtIn')
+
+    expect(game.questCatalogResolved).toBe(true)
+    expect(game.refreshProgressUI).toHaveBeenCalledOnce()
+    expect(hud.setGamificationVisible).toHaveBeenLastCalledWith(true)
+    expect(recordBook.setGamificationVisible).toHaveBeenLastCalledWith(true)
   })
 
   it('persists only accepted frame/theme selections and reports their ID after state changes', () => {
@@ -1186,5 +1222,50 @@ describe('Game progression UI integration', () => {
       ['electric_night'],
     ])
     expect(game.refreshProgressUI).toHaveBeenCalledTimes(2)
+  })
+
+  it('refreshes unlocked share-title evidence after accepted player projections', () => {
+    const initial = createDefaultProgress('projection-initial')
+    const rewarded = createDefaultProgress('projection-rewarded')
+    rewarded.achievements.hits_1000 = {
+      unlockedAt: '2026-07-17T03:00:00.000Z',
+      seen: true,
+    }
+    rewarded.profile.selectedTitle = '산산조각'
+    let state = initial
+    const game = Object.create(Game.prototype) as any
+    game.progress = {
+      get state() { return state },
+      questCatalog: targetsCatalog,
+      replaceState: vi.fn((next: ProgressStateV1) => { state = next; return true }),
+    }
+    game.progressScopeIdentity = 'player:player-1'
+    game.progressScopeGeneration = 3
+    game.progressScopeRevision = 0
+    game.questCatalogResolved = true
+    game.remoteConfig = { active: { gamification_enabled: true, player_profiles_ui: false } }
+    game.playerAccount = { kind: 'guest', signupEnabled: false, card: { visible: false, kind: 'hidden' } }
+    game.cancelAction = vi.fn()
+    game.controller = { setStrongInput: vi.fn() }
+    game.applyMotionSetting = vi.fn()
+    game.hud = { setBest: vi.fn(), setProgress: vi.fn(), setGamificationVisible: vi.fn() }
+    game.recordBook = { render: vi.fn(), setGamificationVisible: vi.fn() }
+    game.profileCard = () => ({ visible: false, kind: 'hidden' })
+
+    expect(game.applyPlayerProjection({
+      userId: 'player-1', generation: 3, revision: 1, state: rewarded,
+    })).toBe(true)
+    expect(game.shareProgress).toMatchObject({
+      selectedTitle: '산산조각',
+      unlockedTitleIds: ['hits_1000'],
+    })
+
+    expect(game.applyPlayerProjection({
+      userId: 'player-1', generation: 3, revision: 2, state: initial,
+    })).toBe(true)
+    expect(game.shareProgress).toMatchObject({
+      selectedTitle: null,
+      unlockedTitleIds: [],
+    })
   })
 })

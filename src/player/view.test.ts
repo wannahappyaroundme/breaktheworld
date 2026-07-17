@@ -335,6 +335,32 @@ describe('PlayerProfileView', () => {
     expect(ui.textContent).toContain('새 프로필 만들기')
   })
 
+  it('records a genuine pin to id to pin transition without rerender duplicates', async () => {
+    const onProfileStepViewed = vi.fn()
+    const { ui, view } = setup(guest(), { onProfileStepViewed })
+    view.openRequired('choice')
+    action(ui, 'create-start').click()
+    let id = ui.querySelector('[data-player-field="profile-name"]')!
+    id.value = '예진'
+    id.dispatch('input')
+    action(ui, 'check-name').click()
+    await flushAsync()
+    expect(onProfileStepViewed.mock.calls).toEqual([['choice'], ['id'], ['pin']])
+
+    id = ui.querySelector('[data-player-field="profile-name"]')!
+    id.value = '새로운ID'
+    id.dispatch('input')
+    id.dispatch('input')
+    expect(onProfileStepViewed.mock.calls).toEqual([['choice'], ['id'], ['pin'], ['id']])
+
+    action(ui, 'check-name').click()
+    await flushAsync()
+    view.render(guest())
+    expect(onProfileStepViewed.mock.calls).toEqual([
+      ['choice'], ['id'], ['pin'], ['id'], ['pin'],
+    ])
+  })
+
   it('shows the approved first choice before play and cannot be dismissed', () => {
     const onGuestChosen = vi.fn()
     const { doc, ui, recordBook, view, fakeWindow } = setup(guest(), { onGuestChosen })

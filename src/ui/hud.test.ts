@@ -377,6 +377,60 @@ describe('Hud compact controls', () => {
 })
 
 describe('Hud progress feedback', () => {
+  it('keeps a neutral record-book control while closed and restores only the latest snapshot', () => {
+    const { hud, parent } = setupHud()
+    const levelButton = parent.querySelector('.hud-level-button')!
+    const levelValue = parent.querySelector('.hud-level-value')!
+    const levelDetail = parent.querySelector('.hud-level-detail')!
+    const unseenBadge = parent.querySelector('.hud-unseen-badge')!
+    const levelTrack = parent.querySelector('.hud-level-track')!
+    const feedback = parent.querySelector('.hud-progress-feedback')!
+
+    hud.setGamificationVisible(false)
+    expect(levelButton.getAttribute('aria-label')).toBe('기록책 열기')
+    expect(levelValue.textContent).toBe('기록책')
+    expect(levelDetail.hidden).toBe(true)
+    expect(levelTrack.hidden).toBe(true)
+    expect(unseenBadge.hidden).toBe(true)
+    expect(levelButton.style.getPropertyValue('--hud-level-ratio')).toBe('0')
+    expect(parent.querySelector('.top-buttons')!.children
+      .map((button) => button.getAttribute('aria-label'))).toEqual([
+      '기록책 열기', '소리 끄기', '게임 메뉴 열기',
+    ])
+
+    hud.setProgress({ level: 5, xp: 300, nextLevelXp: 450, ratio: 2, unseen: 2 })
+    hud.showProgressGain({ xp: 200, levelUp: 5 })
+    expect(levelButton.textContent).not.toContain('LV 5')
+    expect(feedback.hidden).toBe(true)
+    expect(feedback.children).toHaveLength(0)
+
+    hud.setGamificationVisible(true)
+    expect(levelValue.textContent).toBe('LV 5')
+    expect(levelDetail.textContent).toBe('300 / 450')
+    expect(levelDetail.hidden).toBe(false)
+    expect(levelTrack.hidden).toBe(false)
+    expect(unseenBadge.textContent).toBe('2')
+    expect(unseenBadge.hidden).toBe(false)
+    expect(levelButton.style.getPropertyValue('--hud-level-ratio')).toBe('1')
+
+    hud.showProgressGain({ xp: 200, levelUp: 5 })
+    expect(feedback.hidden).toBe(false)
+    expect(levelButton.classList.contains('progress-gain')).toBe(true)
+    hud.setGamificationVisible(false)
+    expect(window.clearTimeout).toHaveBeenCalledWith(1)
+    expect(feedback.hidden).toBe(true)
+    expect(feedback.children).toHaveLength(0)
+    expect(feedback.classList.contains('show')).toBe(false)
+    expect(levelButton.classList.contains('progress-gain')).toBe(false)
+
+    hud.setProgress({ level: 10, xp: 1_250, nextLevelXp: 1_500, ratio: 0, unseen: 4 })
+    expect(levelValue.textContent).toBe('기록책')
+    hud.setGamificationVisible(true)
+    expect(levelValue.textContent).toBe('LV 10')
+    expect(levelDetail.textContent).toBe('1250 / 1500')
+    expect(unseenBadge.textContent).toBe('4')
+  })
+
   it('renders bounded progress without creating a second live region', () => {
     const { hud, parent } = setupHud()
     hud.setProgress({ level: 5, xp: 300, nextLevelXp: 450, ratio: 2, unseen: 2 })

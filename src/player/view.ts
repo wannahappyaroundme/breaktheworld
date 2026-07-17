@@ -348,6 +348,7 @@ export class PlayerProfileView {
       this.createForm.profileName = name.input.value
       this.controller.editProfileName(name.input.value)
       advanced.hidden = true
+      this.trackProfileStep('id')
       updateSubmit()
     })
     name.input.addEventListener('input', (event) => {
@@ -355,6 +356,7 @@ export class PlayerProfileView {
       this.createForm.profileName = name.input.value
       this.controller.editProfileName(name.input.value)
       advanced.hidden = true
+      this.trackProfileStep('id')
       updateSubmit()
     })
     const check = this.actionButton(

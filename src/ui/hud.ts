@@ -66,11 +66,20 @@ export class Hud {
   private levelValue: HTMLSpanElement
   private levelDetail: HTMLSpanElement
   private unseenBadge: HTMLSpanElement
+  private levelTrack: HTMLSpanElement
   private moreBtn: HTMLButtonElement
   private moreMenu: HTMLDivElement
   private controls: HTMLDivElement
   private progressFeedback: HTMLDivElement
   private progressFeedbackTimer: number | null = null
+  private gamificationVisible = true
+  private progressSnapshot: HudProgress = {
+    level: 1,
+    xp: 0,
+    nextLevelXp: 50,
+    ratio: 0,
+    unseen: 0,
+  }
   private parent: HTMLElement
   private feverBanner: HTMLDivElement
   private noticeEl: HTMLDivElement
@@ -124,9 +133,9 @@ export class Hud {
     this.unseenBadge = span('hud-unseen-badge', '')
     this.unseenBadge.setAttribute('aria-hidden', 'true')
     this.unseenBadge.hidden = true
-    const levelTrack = span('hud-level-track', '')
-    levelTrack.setAttribute('aria-hidden', 'true')
-    this.levelBtn.append(this.levelValue, this.levelDetail, this.unseenBadge, levelTrack)
+    this.levelTrack = span('hud-level-track', '')
+    this.levelTrack.setAttribute('aria-hidden', 'true')
+    this.levelBtn.append(this.levelValue, this.levelDetail, this.unseenBadge, this.levelTrack)
     this.levelBtn.style.setProperty('--hud-level-ratio', '0')
 
     this.soundBtn = mkBtn('소리 끄기', () => this.runCallback(cb.onToggleSound))
@@ -208,23 +217,38 @@ export class Hud {
 
   setProgress(progress: HudProgress): void {
     if (this.destroyed) return
-    const level = boundedInteger(progress.level, 1, MAX_LEVEL)
-    const xp = boundedInteger(progress.xp, 0, MAX_ACHIEVEMENT_XP)
-    const nextLevelXp = boundedInteger(progress.nextLevelXp, 0, MAX_ACHIEVEMENT_XP)
-    const unseen = boundedInteger(progress.unseen, 0, MAX_ACHIEVEMENTS)
-    const ratio = boundedRatio(progress.ratio)
-    this.levelValue.textContent = `LV ${level}`
-    this.levelDetail.textContent = nextLevelXp > 0 ? `${xp} / ${nextLevelXp}` : `${xp} 경험치`
-    this.levelBtn.style.setProperty('--hud-level-ratio', String(ratio))
-    this.levelBtn.setAttribute('aria-label', unseen > 0
-      ? `기록책 열기, 현재 레벨 ${level}, 새 업적 ${unseen}개`
-      : `기록책 열기, 현재 레벨 ${level}`)
-    this.unseenBadge.textContent = unseen > 0 ? String(unseen) : ''
-    this.unseenBadge.hidden = unseen === 0
+    this.progressSnapshot = {
+      level: boundedInteger(progress.level, 1, MAX_LEVEL),
+      xp: boundedInteger(progress.xp, 0, MAX_ACHIEVEMENT_XP),
+      nextLevelXp: boundedInteger(progress.nextLevelXp, 0, MAX_ACHIEVEMENT_XP),
+      unseen: boundedInteger(progress.unseen, 0, MAX_ACHIEVEMENTS),
+      ratio: boundedRatio(progress.ratio),
+    }
+    if (this.gamificationVisible) this.renderProgress()
+  }
+
+  setGamificationVisible(visible: boolean): void {
+    if (this.destroyed) return
+    this.gamificationVisible = visible
+    if (!visible) {
+      this.clearProgressFeedback()
+      this.levelValue.textContent = '기록책'
+      this.levelDetail.textContent = ''
+      this.levelDetail.hidden = true
+      this.levelTrack.hidden = true
+      this.unseenBadge.textContent = ''
+      this.unseenBadge.hidden = true
+      this.levelBtn.style.setProperty('--hud-level-ratio', '0')
+      this.levelBtn.setAttribute('aria-label', '기록책 열기')
+      return
+    }
+    this.levelDetail.hidden = false
+    this.levelTrack.hidden = false
+    this.renderProgress()
   }
 
   showProgressGain(gain: HudProgressGain): void {
-    if (this.destroyed) return
+    if (this.destroyed || !this.gamificationVisible) return
     const xp = boundedInteger(gain.xp, 0, MAX_ACHIEVEMENT_XP)
     const levelUp = gain.levelUp === null || !Number.isFinite(gain.levelUp)
       ? null
@@ -292,13 +316,9 @@ export class Hud {
     this.moreMenu.removeEventListener('keydown', this.handleMenuKeydown)
     this.closeMenu(false)
     this.notices.clear()
+    this.clearProgressFeedback()
     for (const timer of this.timers) window.clearTimeout(timer)
     this.timers.clear()
-    this.progressFeedbackTimer = null
-    this.progressFeedback.replaceChildren()
-    this.progressFeedback.classList.remove('show', 'level-up')
-    this.progressFeedback.hidden = true
-    this.levelBtn.classList.remove('progress-gain', 'level-up')
     for (const element of this.transientFeedback) element.remove()
     this.transientFeedback.clear()
     this.top.remove()
@@ -411,6 +431,27 @@ export class Hud {
   private clearTimer(handle: number): void {
     window.clearTimeout(handle)
     this.timers.delete(handle)
+  }
+
+  private renderProgress(): void {
+    const { level, xp, nextLevelXp, unseen, ratio } = this.progressSnapshot
+    this.levelValue.textContent = `LV ${level}`
+    this.levelDetail.textContent = nextLevelXp > 0 ? `${xp} / ${nextLevelXp}` : `${xp} 경험치`
+    this.levelBtn.style.setProperty('--hud-level-ratio', String(ratio))
+    this.levelBtn.setAttribute('aria-label', unseen > 0
+      ? `기록책 열기, 현재 레벨 ${level}, 새 업적 ${unseen}개`
+      : `기록책 열기, 현재 레벨 ${level}`)
+    this.unseenBadge.textContent = unseen > 0 ? String(unseen) : ''
+    this.unseenBadge.hidden = unseen === 0
+  }
+
+  private clearProgressFeedback(): void {
+    if (this.progressFeedbackTimer !== null) this.clearTimer(this.progressFeedbackTimer)
+    this.progressFeedbackTimer = null
+    this.progressFeedback.replaceChildren()
+    this.progressFeedback.classList.remove('show', 'level-up')
+    this.progressFeedback.hidden = true
+    this.levelBtn.classList.remove('progress-gain', 'level-up')
   }
 
   private showNotice(notice: QueuedNotification): void {

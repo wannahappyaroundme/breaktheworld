@@ -134,6 +134,7 @@ export class Game {
   private analyticsInstallSeed = ''
   private shareProgress = {
     selectedTitle: null as string | null,
+    unlockedTitleIds: [] as string[],
     frameId: 'default' as ProfileFrameId,
     recordBookThemeId: 'default' as RecordBookThemeId,
     level: 1,
@@ -170,6 +171,7 @@ export class Game {
       onOpenRecordBook: this.onOpenRecordBook,
       onShare: this.onShare,
     })
+    this.hud.setGamificationVisible(false)
     this.progressFallback = createMemoryFallbackHandler((notice) => this.hud.notify(notice))
     this.progress = this.createProgress(this.createProgressStoreForScope({ kind: 'guest' }))
     this.analyticsInstallSeed = this.progress.state.installSeed
@@ -337,9 +339,10 @@ export class Game {
       this.applyPendingRemoteConfig()
       return result.source
     } catch {
-      if (this.progress.setCatalog(BUILT_IN_CATALOG)) {
-        this.questCatalogResolved = true
-        this.ensureCurrentDay()
+      this.questCatalogResolved = this.progress.setCatalog(BUILT_IN_CATALOG)
+      if (this.questCatalogResolved) {
+        const changed = this.ensureCurrentDay()
+        if (!changed) this.refreshProgressUI()
       }
       return 'builtIn'
     }
@@ -505,20 +508,21 @@ export class Game {
     const view = makeRecordBookView(state, this.progress.questCatalog)
     this.shareProgress = {
       ...view.profile,
+      unlockedTitleIds: view.cosmetics.titles
+        .filter(({ unlocked }) => unlocked)
+        .map(({ id }) => id),
       level: view.summary.level,
     }
     this.best = state.lifetime.bestCombo
     this.totalTargets = state.lifetime.totalTargets
     this.hud.setBest(this.best)
-    if (this.remoteConfig.active.gamification_enabled) {
-      this.hud.setProgress({
-        level: view.summary.level,
-        xp: view.summary.xp,
-        nextLevelXp: view.summary.nextLevelXp,
-        ratio: view.summary.levelRatio,
-        unseen: view.achievements.items.filter(({ complete, seen }) => complete && !seen).length,
-      })
-    }
+    this.hud.setProgress({
+      level: view.summary.level,
+      xp: view.summary.xp,
+      nextLevelXp: view.summary.nextLevelXp,
+      ratio: view.summary.levelRatio,
+      unseen: view.achievements.items.filter(({ complete, seen }) => complete && !seen).length,
+    })
     this.recordBook.render(
       view,
       this.settingsState(state),
@@ -528,14 +532,22 @@ export class Game {
   }
 
   private applyGamificationVisibility(): void {
-    this.recordBook.setGamificationVisible(this.remoteConfig.active.gamification_enabled)
+    const visible = this.progressionUiVisible()
+    this.hud.setGamificationVisible(visible)
+    this.recordBook.setGamificationVisible(visible)
+  }
+
+  private progressionUiVisible(): boolean {
+    return (
+      this.questCatalogResolved === true
+      && this.remoteConfig.active.gamification_enabled
+    )
   }
 
   private applyPendingRemoteConfig(): void {
     this.remoteConfig.applyIfSettled(this.controller.hasUnsettledAction, {
       applyCatalog: (catalog) => {
-        if (!this.progress.setCatalog(catalog)) return
-        this.questCatalogResolved = true
+        this.questCatalogResolved = this.progress.setCatalog(catalog)
       },
       onFlagsApplied: (flags) => {
         this.applyRemoteFlags(flags)
@@ -896,18 +908,25 @@ export class Game {
   private onShare = (): void => {
     this.audio.unlock()
     this.hud.toast('📸 카드 만드는 중…')
-    const visibleProfile = this.remoteConfig.active.gamification_enabled
+    const progressionVisible = this.progressionUiVisible()
+    const visibleProfile = progressionVisible
       ? this.shareProgress
-      : { selectedTitle: null, frameId: 'default' as const, recordBookThemeId: 'default' as const }
+      : {
+          selectedTitle: null,
+          unlockedTitleIds: [] as string[],
+          frameId: 'default' as const,
+          recordBookThemeId: 'default' as const,
+        }
     void shareCard(
       {
         best: this.best,
         total: this.totalTargets,
         url: location.href.split('?')[0],
         title: visibleProfile.selectedTitle,
+        unlockedTitleIds: visibleProfile.unlockedTitleIds,
         frameId: visibleProfile.frameId,
         recordBookThemeId: visibleProfile.recordBookThemeId,
-        level: this.remoteConfig.active.gamification_enabled ? this.shareProgress.level : 1,
+        level: progressionVisible ? this.shareProgress.level : 1,
       },
       (m) => this.hud.toast(m)
     ).then((result) => {

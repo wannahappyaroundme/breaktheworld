@@ -68,13 +68,14 @@ describe('share card', () => {
       best: 42,
       total: 8,
       url: 'https://example.com/game',
-      title: '첫 와장창',
+      title: '산산조각',
+      unlockedTitleIds: ['hits_1000'],
       frameId: 'electric_night',
       recordBookThemeId: 'electric_night',
       level: 10,
     })
 
-    expect(harness.texts).toContain('첫 와장창')
+    expect(harness.texts).toContain('산산조각')
     expect(harness.texts).toContain('🔥 최고 연속 42')
     expect(harness.texts.join(' ')).not.toContain('최고 콤보')
     expect(harness.strokeRect).toHaveBeenCalledOnce()
@@ -95,6 +96,7 @@ describe('share card', () => {
       total: 8,
       url: 'https://example.com/game',
       title: 'unknown title',
+      unlockedTitleIds: ['hits_1000'],
       frameId: 'electric_night',
       recordBookThemeId: 'unknown',
       level: 1,
@@ -106,6 +108,23 @@ describe('share card', () => {
     expect(harness.texts).toContain('💥 지금까지 8개 부숨')
   })
 
+  it('rejects known-but-locked and known non-title achievement names', () => {
+    renderCard({
+      best: 9, total: 2, url: 'https://example.com/game',
+      title: '산산조각', unlockedTitleIds: [],
+      frameId: 'default', recordBookThemeId: 'default', level: 20,
+    })
+    expect(harness.texts).not.toContain('산산조각')
+
+    harness.texts.length = 0
+    renderCard({
+      best: 9, total: 2, url: 'https://example.com/game',
+      title: '첫 와장창', unlockedTitleIds: ['first_destroy'],
+      frameId: 'default', recordBookThemeId: 'default', level: 20,
+    })
+    expect(harness.texts).not.toContain('첫 와장창')
+  })
+
   it('returns native success so gameplay can emit SHARE_COMPLETED truthfully', async () => {
     const share = vi.fn(async () => undefined)
     vi.stubGlobal('navigator', { canShare: () => true, share })
@@ -115,6 +134,7 @@ describe('share card', () => {
       total: 3,
       url: 'https://example.com/game',
       title: null,
+      unlockedTitleIds: [],
       frameId: 'default', recordBookThemeId: 'default', level: 1,
     }, vi.fn())
 
@@ -135,6 +155,7 @@ describe('share card', () => {
       total: 3,
       url: 'https://example.com/game',
       title: null,
+      unlockedTitleIds: [],
       frameId: 'default', recordBookThemeId: 'default', level: 1,
     }, toast)
 
@@ -152,6 +173,7 @@ describe('share card', () => {
       total: 0,
       url: 'https://example.com/game',
       title: null,
+      unlockedTitleIds: [],
       frameId: 'default', recordBookThemeId: 'default', level: 1,
     }, toast)
 
@@ -174,6 +196,7 @@ describe('share card', () => {
       total: 1,
       url: 'https://example.com/game',
       title: null,
+      unlockedTitleIds: [],
       frameId: 'default', recordBookThemeId: 'default', level: 1,
     }, toast)).resolves.toEqual({ ok: false, method: 'none' })
     expect(toast.mock.calls[0][0]).toContain('다시')
@@ -201,7 +224,8 @@ describe('share card', () => {
       best: 12,
       total: 4,
       url: 'https://example.com/game',
-      title: '첫 와장창',
+      title: '산산조각',
+      unlockedTitleIds: ['hits_1000'],
       frameId: 'first_crack', recordBookThemeId: 'default', level: 5,
     }, toast)
 

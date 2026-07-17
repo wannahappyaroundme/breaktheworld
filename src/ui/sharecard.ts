@@ -10,6 +10,7 @@ export interface ShareStats {
   total: number
   url: string
   title: string | null
+  unlockedTitleIds: readonly string[]
   frameId: string
   recordBookThemeId: string
   level: number
@@ -57,8 +58,17 @@ export function renderCard(s: ShareStats): HTMLCanvasElement {
   const themeId = availableThemes.includes(s.recordBookThemeId as never)
     ? s.recordBookThemeId
     : 'default'
-  const title = ACHIEVEMENT_CATALOG.some((achievement) => achievement.name === s.title)
-    ? s.title
+  const unlockedTitleIds = new Set(
+    Array.isArray(s.unlockedTitleIds)
+      ? s.unlockedTitleIds.filter((id): id is string => typeof id === 'string')
+      : []
+  )
+  const titleReward = ACHIEVEMENT_CATALOG.find((achievement) => (
+    achievement.titleReward
+    && achievement.name === s.title
+  ))
+  const title = titleReward && unlockedTitleIds.has(titleReward.id)
+    ? titleReward.name
     : null
   const theme = THEME_COLORS[themeId] ?? THEME_COLORS.default
 
