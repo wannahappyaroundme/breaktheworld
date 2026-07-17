@@ -107,6 +107,20 @@ class FakeElement {
   contains(node: FakeElement | null): boolean {
     return node === this || this.children.some((child) => child.contains(node))
   }
+  closest(selector: string): FakeElement | null {
+    const selectors = selector.split(',').map((candidate) => candidate.trim())
+    let current: FakeElement | null = this
+    while (current) {
+      const found = selectors.some((candidate) => {
+        if (candidate === '[hidden]') return current?.hidden === true
+        if (candidate === '[inert]') return current?.inert === true || current?.getAttribute('inert') !== null
+        return current ? matches(current, candidate) : false
+      })
+      if (found) return current
+      current = current.parentElement
+    }
+    return null
+  }
   querySelector(selector: string): FakeElement | null { return this.querySelectorAll(selector)[0] ?? null }
   querySelectorAll(selector: string): FakeElement[] {
     const selectors = selector.split(',')
@@ -298,6 +312,27 @@ describe('PlayerProfileView', () => {
     expect(action(ui, 'guest-start').classList.contains('player-choice-card')).toBe(true)
     expect(action(ui, 'login-start').textContent).toContain('프로필로 이어하기')
     expect(action(ui, 'guest-start').textContent).toContain('이 기기에서 바로 놀기')
+  })
+
+  it('recommends profile creation only while that required choice is usable', () => {
+    const { ui, view } = setup(guest(false))
+
+    view.openRequired('choice')
+
+    const closedCreate = action(ui, 'create-start')
+    expect(closedCreate.disabled).toBe(true)
+    expect(closedCreate.classList.contains('player-choice-recommended')).toBe(false)
+    expect(closedCreate.textContent).not.toContain('처음이라면 추천')
+    expect(closedCreate.textContent).toContain('로그인하거나 이 기기에서 바로 놀 수 있어요')
+    expect(action(ui, 'login-start').classList.contains('player-choice-card')).toBe(true)
+    expect(action(ui, 'guest-start').classList.contains('player-choice-card')).toBe(true)
+
+    view.render(guest(true))
+
+    const openCreate = action(ui, 'create-start')
+    expect(openCreate.disabled).toBe(false)
+    expect(openCreate.classList.contains('player-choice-recommended')).toBe(true)
+    expect(openCreate.textContent).toContain('처음이라면 추천')
   })
 
   it('uses the same profile panel for the bounded checking state', () => {
@@ -590,6 +625,45 @@ describe('PlayerProfileView', () => {
     expect(recordBook.getAttribute('inert')).toBeNull()
     expect(doc.documentElement.classList.contains('profile-open')).toBe(false)
     expect(doc.activeElement).toBe(trigger)
+  })
+
+  it('wraps focus across create step one without entering hidden PIN controls', () => {
+    const { doc, ui, view } = setup()
+    view.openRequired('choice')
+    action(ui, 'create-start').click()
+    const back = action(ui, 'back')
+    const check = action(ui, 'check-name')
+
+    back.focus()
+    const reverse = doc.dispatch('keydown', { key: 'Tab', shiftKey: true })
+    expect(reverse.defaultPrevented).toBe(true)
+    expect(doc.activeElement).toBe(check)
+
+    check.focus()
+    const forward = doc.dispatch('keydown', { key: 'Tab' })
+    expect(forward.defaultPrevented).toBe(true)
+    expect(doc.activeElement).toBe(back)
+  })
+
+  it('includes newly visible create step two controls in focus wrapping', async () => {
+    const { doc, ui, view } = setup()
+    view.openRequired('choice')
+    action(ui, 'create-start').click()
+    const id = ui.querySelector('[data-player-field="profile-name"]')!
+    id.value = '예진'
+    id.dispatch('input')
+    action(ui, 'check-name').click()
+    await flushAsync()
+
+    const back = action(ui, 'back')
+    const age = ui.querySelector('[data-player-field="over14"]')!
+    back.focus()
+    doc.dispatch('keydown', { key: 'Tab', shiftKey: true })
+    expect(doc.activeElement).toBe(age)
+
+    age.focus()
+    doc.dispatch('keydown', { key: 'Tab' })
+    expect(doc.activeElement).toBe(back)
   })
 
   it('keeps mobile controls zoomable and accessible in CSS', async () => {

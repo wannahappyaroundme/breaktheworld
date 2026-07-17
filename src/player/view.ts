@@ -273,7 +273,7 @@ export class PlayerProfileView {
           ? '첫 기록부터 여러 기기에서 이어가요.'
           : '새 프로필을 쓸 수 있을 때까지 로그인하거나 이 기기에서 바로 놀 수 있어요.',
         'create-start',
-        true,
+        signupEnabled,
       )
       : this.actionButton('새 프로필 만들기', 'create-start', true)
     create.disabled = !signupEnabled
@@ -876,9 +876,19 @@ export class PlayerProfileView {
 
   private focusable(): HTMLElement[] {
     return Array.from(this.panel.querySelectorAll<HTMLElement>('button, input, [href], [tabindex]'))
-      .filter((node) => !node.hidden
-        && !('disabled' in node && (node as HTMLButtonElement | HTMLInputElement).disabled)
-        && node.getAttribute('aria-hidden') !== 'true')
+      .filter((node) => {
+        if (node.closest('[hidden],[inert],[aria-hidden="true"]')) return false
+        if ('disabled' in node && (node as HTMLButtonElement | HTMLInputElement).disabled) return false
+        const view = node.ownerDocument.defaultView
+        if (!view) return true
+        for (let current: HTMLElement | null = node; current; current = current.parentElement) {
+          const style = view.getComputedStyle(current)
+          if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') {
+            return false
+          }
+        }
+        return true
+      })
   }
 
   private firstFocusable(): HTMLElement | null {
