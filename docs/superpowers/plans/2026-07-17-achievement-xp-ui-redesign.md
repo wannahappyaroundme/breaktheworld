@@ -139,6 +139,7 @@ export interface AchievementDefinition {
   readonly tier: AchievementTier
   readonly xp: 50 | 100 | 200 | 400
   readonly icon: string
+  readonly target: number
   readonly condition: AchievementCondition
   readonly titleReward: boolean
 }
@@ -271,7 +272,7 @@ it('loads an old schema-one state with default cosmetics and all valid legacy pr
 })
 
 it('rejects a locked frame and saves an unlocked frame exactly once', () => {
-  const coordinator = setupCoordinator(stateAtXp(299))
+  const coordinator = setupCoordinator(stateAtXp(250))
   expect(coordinator.selectFrame('first_crack')).toBe(false)
   coordinator.replaceState(stateAtXp(300))
   expect(coordinator.selectFrame('first_crack')).toBe(true)
@@ -287,6 +288,19 @@ it('groups simultaneous unlocks and XP into one achievement notice', () => {
     kind: 'achievement',
     text: '업적 2개 달성, 경험치 +100',
   }))
+})
+
+it('reconciles provable achievements on load before another gameplay event', () => {
+  const coordinator = setupCoordinator(oldState({ validHits: 1_000, totalTargets: 100 }))
+  expect(coordinator.state.achievements).toMatchObject({
+    first_hit: expect.anything(),
+    hits_100: expect.anything(),
+    hits_1000: expect.anything(),
+    first_destroy: expect.anything(),
+    destroys_25: expect.anything(),
+    destroys_100: expect.anything(),
+  })
+  expect(save).toHaveBeenCalledWith(expect.anything(), 'achievementBackfill')
 })
 ```
 
@@ -318,6 +332,8 @@ profile: {
 ```
 
 `parseProfile` accepts only catalog-approved IDs, defaults missing values, and drops locked/unknown values during server projection normalization. Do not change the root schema version or storage key.
+
+On coordinator construction, run one pure reconciliation pass over loaded counters before assigning the daily quest. Persist only when new IDs are found, using checkpoint reason `achievementBackfill`. Do not fire 27 separate startup toasts; the RecordBook home renders all unseen reconciled IDs as one persistent summary and `markAchievementsSeen` clears it after the hub closes.
 
 - [ ] **Step 4: Replace per-event unlock notifications with one batch result**
 
@@ -401,6 +417,18 @@ it('accepts an old state without cosmetic fields and preserves old operations', 
   expect(response.state.profile).toMatchObject({ frameId: 'default', recordBookThemeId: 'default' })
 })
 
+it('backfills reached catalog achievements on a read-only sync with no operations', async () => {
+  const value = setup({ storedState: oldState({ validHits: 1_000, totalTargets: 100 }) })
+  const response = await createPlayerSyncHandler(value.dependencies)(request({ operations: [] }))
+  const body = await response.json()
+  expect(body.state.achievements).toMatchObject({
+    first_hit: expect.anything(),
+    hits_1000: expect.anything(),
+    destroys_100: expect.anything(),
+  })
+  expect(value.dependencies.compareAndSwapProgress).toHaveBeenCalledTimes(1)
+})
+
 it('rejects selecting a cosmetic before the server-derived required level', () => {
   const next = applyPlayerOperation(emptyState(), accepted(operation({
     settings: { frameId: 'legend_crown' },
@@ -445,6 +473,8 @@ function applyAccountDelta(
 ```
 
 For `server`, ignore incoming timestamps, apply all bounded counter deltas, then loop through `ACHIEVEMENT_CATALOG` and create only reached records with `trustedAt`. Merge `seen=true` only after reachability is established. For `optimistic`, use `createdAt` so offline UI remains responsive, knowing the later server projection is final.
+
+The handler also runs the same reconciliation on the loaded projection before its no-operation early return. If reconciliation adds IDs, persist the projection through the existing compare-and-swap path using the current trusted server time. This makes old profiles receive backfill on their first read-only sync rather than waiting for a new attack.
 
 - [ ] **Step 5: Authorize cosmetic settings from derived level**
 
