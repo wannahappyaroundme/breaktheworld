@@ -11,6 +11,7 @@ import type {
   PlayerProgressOperationV1,
   SyncProgressState,
 } from '../../supabase/functions/_shared/player-sync-contract.ts'
+import { ACHIEVEMENT_CATALOG_PUBLISHED_AT } from '../../supabase/functions/_shared/achievement-catalog.ts'
 
 const USER_ID = '71000000-0000-4000-8000-000000000001'
 const DEVICE_A = '72000000-0000-4000-8000-000000000001'
@@ -20,6 +21,15 @@ const NOW = '2026-07-16T12:00:00.000Z'
 
 function zero(): SyncProgressState {
   return createDefaultProgress('74000000-0000-4000-8000-000000000001')
+}
+
+function legacyState(overrides: Partial<SyncProgressState['lifetime']> = {}): unknown {
+  const state = zero()
+  state.lifetime = { ...state.lifetime, ...overrides }
+  const profile = state.profile as unknown as Record<string, unknown>
+  delete profile.frameId
+  delete profile.recordBookThemeId
+  return state
 }
 
 function operation(
@@ -269,7 +279,7 @@ describe('player sync handler', () => {
   })
 
   it('keeps an empty pull available while sync writes are paused', async () => {
-    const value = setup({ writeEnabled: false })
+    const value = setup({ writeEnabled: false, projection: legacyState() })
     const pull = await createPlayerSyncHandler(value.dependencies)(request())
     expect(pull.status).toBe(200)
     expect(await json(pull)).toEqual(expect.objectContaining({
@@ -277,6 +287,9 @@ describe('player sync handler', () => {
       deviceId: DEVICE_A,
       acknowledgedThrough: 0,
       revision: 0,
+      state: expect.objectContaining({
+        profile: expect.objectContaining({ frameId: 'default', recordBookThemeId: 'default' }),
+      }),
     }))
 
     const write = await createPlayerSyncHandler(value.dependencies)(request({ operations: [operation()] }))
@@ -295,6 +308,47 @@ describe('player sync handler', () => {
       dayKey: '2026-07-16',
       questId: expect.stringMatching(/^(charged_finisher_2|characters_3|targets_3)$/),
     }))
+  })
+
+  it('accepts an old projection and old operation while filling cosmetic defaults', async () => {
+    const value = setup({ projection: legacyState() })
+    const oldOperation = operation(DEVICE_A, 1, OP_A1, {
+      validHits: 1,
+      settings: { reducedMotion: true },
+    })
+    const response = await createPlayerSyncHandler(value.dependencies)(request({
+      operations: [oldOperation],
+    }))
+    expect(response.status).toBe(200)
+    const state = (await json(response)).state as SyncProgressState
+    expect(state.lifetime.validHits).toBe(1)
+    expect(state.profile).toMatchObject({
+      frameId: 'default',
+      recordBookThemeId: 'default',
+      reducedMotion: true,
+    })
+  })
+
+  it('backfills reached achievements once on a read-only sync through progress CAS', async () => {
+    const stored = zero()
+    stored.lifetime.validHits = 1_000
+    stored.lifetime.totalTargets = 100
+    const value = setup({ projection: stored })
+    const handler = createPlayerSyncHandler(value.dependencies)
+
+    const response = await handler(request({ operations: [] }))
+    expect(response.status).toBe(200)
+    const state = (await json(response)).state as SyncProgressState
+    expect(state.achievements).toMatchObject({
+      first_hit: { unlockedAt: ACHIEVEMENT_CATALOG_PUBLISHED_AT, seen: false },
+      hits_1000: { unlockedAt: ACHIEVEMENT_CATALOG_PUBLISHED_AT, seen: false },
+      destroys_100: { unlockedAt: ACHIEVEMENT_CATALOG_PUBLISHED_AT, seen: false },
+    })
+    expect(value.dependencies.compareAndSwapProgress).toHaveBeenCalledTimes(1)
+
+    const repeated = await handler(request({ operations: [] }))
+    expect(repeated.status).toBe(200)
+    expect(value.dependencies.compareAndSwapProgress).toHaveBeenCalledTimes(1)
   })
 
   it('filters a matching accepted prefix and sends only the contiguous remainder', async () => {

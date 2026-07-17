@@ -2,15 +2,24 @@ import type { PlayerVerification } from './player-request-security.ts'
 import {
   applyPlayerOperation,
   parseSyncBatch,
+  reconcilePlayerAchievements,
   type AcceptedPlayerProgressOperationV1,
   type PlayerProgressOperationV1,
   type SyncProgressState,
 } from './player-sync-contract.ts'
 import { isUuid } from './player-contract.ts'
+import {
+  ACHIEVEMENT_CATALOG,
+  availableFrameIds,
+  availableThemeIds,
+} from './achievement-catalog.ts'
 
 const MAX_BODY_BYTES = 256 * 1024
 const MAX_PROJECTION_ATTEMPTS = 3
 const MAX_DAILY_AGE_DAYS = 90
+const ACHIEVEMENT_IDS = new Set<string>(ACHIEVEMENT_CATALOG.map(({ id }) => id))
+const FRAME_IDS = new Set<string>(availableFrameIds(20))
+const THEME_IDS = new Set<string>(availableThemeIds(20))
 
 interface ServerQuest {
   id: string
@@ -148,6 +157,12 @@ function validCounter(value: unknown): value is number {
   return safeNonnegativeInteger(value)
 }
 
+function validIso(value: unknown): value is string {
+  return typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)
+    && Number.isFinite(Date.parse(value))
+}
+
 function validStringArray(value: unknown): value is string[] {
   return Array.isArray(value)
     && value.length <= 64
@@ -207,27 +222,56 @@ function parseProgressState(value: unknown): SyncProgressState | null {
     const target = value.byTarget[targetId]
     if (!isRecord(target) || !hasExactKeys(target, ['destroys']) || !validCounter(target.destroys)) return null
   }
-  if (!isRecord(value.achievements) || Object.keys(value.achievements).length > 5) return null
+  if (
+    !isRecord(value.achievements)
+    || Object.keys(value.achievements).length > ACHIEVEMENT_CATALOG.length
+    || Object.keys(value.achievements).some((id) => !ACHIEVEMENT_IDS.has(id))
+  ) return null
   for (const achievement of Object.values(value.achievements)) {
     if (!isRecord(achievement) || !hasExactKeys(achievement, ['unlockedAt', 'seen'])) return null
-    if (typeof achievement.unlockedAt !== 'string' || typeof achievement.seen !== 'boolean') return null
+    if (!validIso(achievement.unlockedAt) || typeof achievement.seen !== 'boolean') return null
   }
   if (!validDaily(value.daily)) return null
-  if (!isRecord(value.profile) || !hasExactKeys(value.profile, [
+  if (!isRecord(value.profile)) return null
+  const profile = value.profile
+  const requiredProfileKeys = [
     'selectedTitle',
     'skins',
     'strongInput',
     'reducedMotion',
     'haptics',
-  ])) return null
+  ] as const
+  const allowedProfileKeys = new Set([
+    ...requiredProfileKeys,
+    'frameId',
+    'recordBookThemeId',
+  ])
   if (
-    (value.profile.selectedTitle !== null && typeof value.profile.selectedTitle !== 'string')
-    || !isRecord(value.profile.skins)
-    || (value.profile.strongInput !== 'hold' && value.profile.strongInput !== 'doubleTap')
-    || typeof value.profile.reducedMotion !== 'boolean'
-    || typeof value.profile.haptics !== 'boolean'
+    requiredProfileKeys.some((key) => !(key in profile))
+    || Object.keys(profile).some((key) => !allowedProfileKeys.has(key))
   ) return null
-  return structuredClone(value) as unknown as SyncProgressState
+  if (
+    (profile.selectedTitle !== null && typeof profile.selectedTitle !== 'string')
+    || !isRecord(profile.skins)
+    || ('frameId' in profile && (
+      typeof profile.frameId !== 'string' || !FRAME_IDS.has(profile.frameId)
+    ))
+    || ('recordBookThemeId' in profile && (
+      typeof profile.recordBookThemeId !== 'string'
+      || !THEME_IDS.has(profile.recordBookThemeId)
+    ))
+    || (profile.strongInput !== 'hold' && profile.strongInput !== 'doubleTap')
+    || typeof profile.reducedMotion !== 'boolean'
+    || typeof profile.haptics !== 'boolean'
+  ) return null
+  const normalized = structuredClone(value) as unknown as SyncProgressState
+  normalized.profile.frameId = 'frameId' in profile
+    ? profile.frameId as SyncProgressState['profile']['frameId']
+    : 'default'
+  normalized.profile.recordBookThemeId = 'recordBookThemeId' in profile
+    ? profile.recordBookThemeId as SyncProgressState['profile']['recordBookThemeId']
+    : 'default'
+  return normalized
 }
 
 async function requestJson(request: Request): Promise<unknown> {
@@ -323,6 +367,25 @@ function sameDailyState(
     && left.quest?.distinct === right.quest?.distinct
 }
 
+function sameReconciledProjection(
+  left: SyncProgressState,
+  right: SyncProgressState,
+): boolean {
+  const leftIds = Object.keys(left.achievements).sort()
+  const rightIds = Object.keys(right.achievements).sort()
+  return leftIds.length === rightIds.length
+    && leftIds.every((id, index) => {
+      const leftValue = left.achievements[id]
+      const rightValue = right.achievements[rightIds[index]]
+      return id === rightIds[index]
+        && leftValue.unlockedAt === rightValue.unlockedAt
+        && leftValue.seen === rightValue.seen
+    })
+    && left.profile.selectedTitle === right.profile.selectedTitle
+    && left.profile.frameId === right.profile.frameId
+    && left.profile.recordBookThemeId === right.profile.recordBookThemeId
+}
+
 function operationBucket(count: number): '0' | '1-10' | '11-50' | '51-100' {
   if (count === 0) return '0'
   if (count <= 10) return '1-10'
@@ -344,7 +407,8 @@ async function currentResponse(
   acknowledgedThrough: number,
 ): Promise<Response> {
   const row = await dependencies.loadProgress(userId)
-  const state = parseProgressState(row.state)
+  const parsed = parseProgressState(row.state)
+  const state = parsed ? reconcilePlayerAchievements(parsed) : null
   if (!state || row.userId !== userId || !safeNonnegativeInteger(row.revision)) {
     throw new Error('projection_parse_failed')
   }
@@ -393,13 +457,15 @@ async function projectOperations(
   const currentDayKey = dependencies.currentKstDayKey()
   for (let attempt = 0; attempt < MAX_PROJECTION_ATTEMPTS; attempt += 1) {
     const progressRow = await dependencies.loadProgress(userId)
-    const state = parseProgressState(progressRow.state)
+    const parsed = parseProgressState(progressRow.state)
     if (
-      !state
+      !parsed
       || progressRow.userId !== userId
       || !safeNonnegativeInteger(progressRow.revision)
       || !safeNonnegativeInteger(progressRow.lastOperationId)
     ) throw new Error('projection_parse_failed')
+    const state = reconcilePlayerAchievements(parsed)
+    const reconciliationChanged = !sameReconciledProjection(parsed, state)
 
     const operations = await dependencies.loadOperationsAfter(userId, progressRow.lastOperationId)
     if (operations.length === 0) {
@@ -408,7 +474,7 @@ async function projectOperations(
         currentDayKey,
         deterministicQuest(progressRow.accountSeed, currentDayKey),
       )
-      if (sameDailyState(state.daily, assignment.state)) {
+      if (!reconciliationChanged && sameDailyState(state.daily, assignment.state)) {
         return { revision: progressRow.revision, state, retryCount: attempt }
       }
       const hydrated = { ...state, daily: structuredClone(assignment.state) }
@@ -472,8 +538,12 @@ async function projectOperations(
     if (dailyConflict) continue
 
     let nextState = state
-    for (const operation of sorted) nextState = applyPlayerOperation(nextState, operation)
     nextState.lifetime.stamps = await dependencies.countDailyCompletions(userId)
+    nextState = reconcilePlayerAchievements(
+      nextState,
+      sorted[sorted.length - 1].acceptedAt,
+    )
+    for (const operation of sorted) nextState = applyPlayerOperation(nextState, operation)
 
     let currentDaily = resolvedDaily.get(currentDayKey)
     if (!currentDaily) {

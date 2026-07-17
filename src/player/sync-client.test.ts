@@ -83,6 +83,44 @@ async function client(options: {
 }
 
 describe('player sync client', () => {
+  it('keeps server-authorized cosmetic selections when hydrating a projection', async () => {
+    const outbox = await queue()
+    const state = successState(100)
+    state.lifetime.chargedFinishers = 10
+    state.achievements = {
+      first_hit: { unlockedAt: NOW, seen: true },
+      hits_100: { unlockedAt: NOW, seen: true },
+      charge_1: { unlockedAt: NOW, seen: true },
+      charge_master: { unlockedAt: NOW, seen: true },
+    }
+    state.profile.frameId = 'first_crack'
+    const api = transport(async (request) => ({
+      status: 200,
+      body: {
+        userId: USER_ID,
+        deviceId: request.deviceId,
+        acknowledgedThrough: 0,
+        revision: 1,
+        state,
+        serverTime: NOW,
+      },
+    }))
+    const projections: string[] = []
+    const value = new PlayerSyncClient({
+      userId: USER_ID,
+      generation: 1,
+      outbox,
+      transport: api,
+      writesEnabled: () => true,
+      getCurrentState: () => structuredClone(state),
+      onProjection: (input) => projections.push(input.state.profile.frameId),
+      onStatus: vi.fn(),
+      nowIso: () => NOW,
+    })
+    await value.syncNow()
+    expect(projections).toEqual(['first_crack'])
+  })
+
   it('acknowledges a batch then rebases remaining optimistic operations', async () => {
     const outbox = await queue()
     await outbox.appendDraft(USER_ID, draft(2))

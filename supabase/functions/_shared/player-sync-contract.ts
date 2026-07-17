@@ -1,5 +1,14 @@
 import { isUuid } from './player-contract.ts'
 import { APPROVED_ANALYTICS_WEAPON_IDS } from './weapon-ids.ts'
+import {
+  ACHIEVEMENT_CATALOG,
+  ACHIEVEMENT_CATALOG_PUBLISHED_AT,
+  achievementReached,
+  availableFrameIds,
+  availableThemeIds,
+  levelProgress,
+  totalAchievementXp,
+} from './achievement-catalog.ts'
 
 const MAX_BATCH_OPERATIONS = 100
 const MAX_BATCH_BYTES = 256 * 1024
@@ -8,7 +17,7 @@ const MAX_DELTA = 1_000
 const MAX_BEST_COMBO = 1_000_000
 const MAX_IDS = 64
 const MAX_WEAPONS = 21
-const MAX_ACHIEVEMENTS = 5
+const MAX_ACHIEVEMENTS = ACHIEVEMENT_CATALOG.length
 const MAX_SAFE_COUNTER = Number.MAX_SAFE_INTEGER
 const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/
 const QUEST_ID = /^[a-z0-9_]{3,64}$/
@@ -57,17 +66,19 @@ const KNOWN_MOVE_IDS = new Set<string>([
   'honeyBomb',
 ])
 
-export const PLAYER_SYNC_ACHIEVEMENTS = Object.freeze([
-  { id: 'first_destroy', title: '첫 와장창', target: 1, condition: 'totalTargets' },
-  { id: 'charge_master', title: '꾹 와장창 장인', target: 10, condition: 'chargedFinishers' },
-  { id: 'variety_10', title: '골고루 파괴', target: 10, condition: 'distinctWeapons' },
-  { id: 'world_cycle', title: '세상 한 바퀴', target: 3, condition: 'worldTargets' },
-  { id: 'combo_50', title: '콤보 폭주', target: 50, condition: 'bestCombo' },
-] as const)
+export const PLAYER_SYNC_ACHIEVEMENTS = Object.freeze(
+  ACHIEVEMENT_CATALOG.map(({ id, name }) => Object.freeze({ id, title: name }))
+)
 
-type AchievementId = (typeof PLAYER_SYNC_ACHIEVEMENTS)[number]['id']
 type QuestEvent = 'CHARGE_RELEASED' | 'WEAPON_USED' | 'TARGET_DESTROYED'
 type StrongInput = 'hold' | 'doubleTap'
+type ProfileFrameId = ReturnType<typeof availableFrameIds>[number]
+type RecordBookThemeId = ReturnType<typeof availableThemeIds>[number]
+
+const ACHIEVEMENT_IDS = new Set<string>(ACHIEVEMENT_CATALOG.map(({ id }) => id))
+const ACHIEVEMENT_TITLES = new Set<string>(ACHIEVEMENT_CATALOG.map(({ name }) => name))
+const FRAME_IDS = new Set<string>(availableFrameIds(20))
+const THEME_IDS = new Set<string>(availableThemeIds(20))
 
 export interface SyncProgressState {
   schemaVersion: 1
@@ -97,6 +108,8 @@ export interface SyncProgressState {
   profile: {
     selectedTitle: string | null
     skins: Record<string, string>
+    frameId: ProfileFrameId
+    recordBookThemeId: RecordBookThemeId
     strongInput: StrongInput
     reducedMotion: boolean
     haptics: boolean
@@ -119,6 +132,8 @@ export interface PlayerProgressDeltaV1 {
     strongInput: StrongInput
     reducedMotion: boolean
     haptics: boolean
+    frameId: ProfileFrameId
+    recordBookThemeId: RecordBookThemeId
   }>
 }
 
@@ -274,11 +289,10 @@ function parseDelta(value: unknown): PlayerProgressDeltaV1 | null {
     }
   }
 
-  const achievementIds = new Set<string>(PLAYER_SYNC_ACHIEVEMENTS.map(({ id }) => id))
   if (!isRecord(value.achievements) || Object.keys(value.achievements).length > MAX_ACHIEVEMENTS) return null
   const achievements: PlayerProgressDeltaV1['achievements'] = {}
   for (const [id, rawAchievement] of Object.entries(value.achievements)) {
-    if (!achievementIds.has(id) || !isRecord(rawAchievement)) return null
+    if (!ACHIEVEMENT_IDS.has(id) || !isRecord(rawAchievement)) return null
     if (!hasExactKeys(rawAchievement, ['unlockedAt', 'seen'])) return null
     if (!isSafeIso(rawAchievement.unlockedAt) || typeof rawAchievement.seen !== 'boolean') return null
     achievements[id] = { unlockedAt: rawAchievement.unlockedAt, seen: rawAchievement.seen }
@@ -292,13 +306,14 @@ function parseDelta(value: unknown): PlayerProgressDeltaV1 | null {
     'strongInput',
     'reducedMotion',
     'haptics',
+    'frameId',
+    'recordBookThemeId',
   ])
   if (Object.keys(value.settings).some((key) => !allowedSettingKeys.has(key))) return null
   const settings: PlayerProgressDeltaV1['settings'] = {}
   if ('selectedTitle' in value.settings) {
-    const titles = new Set<string>(PLAYER_SYNC_ACHIEVEMENTS.map(({ title }) => title))
     if (value.settings.selectedTitle !== null && (
-      typeof value.settings.selectedTitle !== 'string' || !titles.has(value.settings.selectedTitle)
+      typeof value.settings.selectedTitle !== 'string' || !ACHIEVEMENT_TITLES.has(value.settings.selectedTitle)
     )) return null
     settings.selectedTitle = value.settings.selectedTitle as string | null
   }
@@ -321,6 +336,17 @@ function parseDelta(value: unknown): PlayerProgressDeltaV1 | null {
   if ('haptics' in value.settings) {
     if (typeof value.settings.haptics !== 'boolean') return null
     settings.haptics = value.settings.haptics
+  }
+  if ('frameId' in value.settings) {
+    if (typeof value.settings.frameId !== 'string' || !FRAME_IDS.has(value.settings.frameId)) return null
+    settings.frameId = value.settings.frameId as ProfileFrameId
+  }
+  if ('recordBookThemeId' in value.settings) {
+    if (
+      typeof value.settings.recordBookThemeId !== 'string'
+      || !THEME_IDS.has(value.settings.recordBookThemeId)
+    ) return null
+    settings.recordBookThemeId = value.settings.recordBookThemeId as RecordBookThemeId
   }
 
   return {
@@ -453,7 +479,7 @@ export function diffPlayerProgress(
     }
   }
 
-  for (const { id } of PLAYER_SYNC_ACHIEVEMENTS) {
+  for (const { id } of ACHIEVEMENT_CATALOG) {
     const before = previous.achievements[id]
     const after = next.achievements[id]
     if (!after) {
@@ -485,6 +511,12 @@ export function diffPlayerProgress(
   if (previous.profile.haptics !== next.profile.haptics) {
     delta.settings.haptics = next.profile.haptics
   }
+  if (previous.profile.frameId !== next.profile.frameId) {
+    delta.settings.frameId = next.profile.frameId
+  }
+  if (previous.profile.recordBookThemeId !== next.profile.recordBookThemeId) {
+    delta.settings.recordBookThemeId = next.profile.recordBookThemeId
+  }
 
   const hasChange = delta.validHits > 0
     || delta.chargedFinishers > 0
@@ -511,33 +543,48 @@ function clampedSum(left: number, right: number): number {
   return Math.min(MAX_SAFE_COUNTER, left + right)
 }
 
-function mergeAchievement(
-  current: { unlockedAt: string; seen: boolean } | undefined,
-  incoming: { unlockedAt: string; seen: boolean }
-): { unlockedAt: string; seen: boolean } {
-  if (!current) return { ...incoming }
-  return {
-    unlockedAt: current.unlockedAt < incoming.unlockedAt ? current.unlockedAt : incoming.unlockedAt,
-    seen: current.seen || incoming.seen,
+function normalizeDerivedSelections(state: SyncProgressState): void {
+  const level = levelProgress(totalAchievementXp(state)).level
+  if (!availableFrameIds(level).includes(state.profile.frameId)) state.profile.frameId = 'default'
+  if (!availableThemeIds(level).includes(state.profile.recordBookThemeId)) {
+    state.profile.recordBookThemeId = 'default'
+  }
+  if (state.profile.selectedTitle !== null) {
+    const definition = ACHIEVEMENT_CATALOG.find(({ name }) => name === state.profile.selectedTitle)
+    if (!definition || !state.achievements[definition.id]) state.profile.selectedTitle = null
   }
 }
 
-function achievementReached(state: SyncProgressState, id: AchievementId): boolean {
-  switch (id) {
-    case 'first_destroy': return state.lifetime.totalTargets >= 1
-    case 'charge_master': return state.lifetime.chargedFinishers >= 10
-    case 'variety_10': return state.lifetime.distinctWeaponIds.length >= 10
-    case 'world_cycle': return ['word', 'earth', 'city'].every((id) => state.byTarget[id as keyof SyncProgressState['byTarget']].destroys > 0)
-    case 'combo_50': return state.lifetime.bestCombo >= 50
+export function reconcilePlayerAchievements(
+  input: SyncProgressState,
+  unlockedAt = ACHIEVEMENT_CATALOG_PUBLISHED_AT,
+): SyncProgressState {
+  const state = structuredClone(input)
+  const achievements: SyncProgressState['achievements'] = {}
+  for (const definition of ACHIEVEMENT_CATALOG) {
+    if (!achievementReached(definition, state)) continue
+    const existing = state.achievements[definition.id]
+    achievements[definition.id] = existing
+      ? { ...existing }
+      : { unlockedAt, seen: false }
   }
+  state.achievements = achievements
+  normalizeDerivedSelections(state)
+  return state
 }
+
+type AchievementAuthority = 'server' | 'optimistic'
 
 function applyAccountDelta(
   input: SyncProgressState,
   operation: PlayerProgressOperationV1,
-  trustedAt: string
+  trustedAt: string,
+  authority: AchievementAuthority,
 ): SyncProgressState {
-  const state = structuredClone(input)
+  let state = reconcilePlayerAchievements(
+    input,
+    authority === 'server' ? ACHIEVEMENT_CATALOG_PUBLISHED_AT : trustedAt,
+  )
   const { delta } = operation
   state.lifetime.validHits = clampedSum(state.lifetime.validHits, delta.validHits)
   state.lifetime.chargedFinishers = clampedSum(state.lifetime.chargedFinishers, delta.chargedFinishers)
@@ -559,17 +606,9 @@ function applyAccountDelta(
       delta.byTarget[targetId]
     )
   }
+  state = reconcilePlayerAchievements(state, trustedAt)
   for (const [id, achievement] of Object.entries(delta.achievements)) {
-    state.achievements[id] = mergeAchievement(state.achievements[id], achievement)
-  }
-
-  for (const definition of PLAYER_SYNC_ACHIEVEMENTS) {
-    if (achievementReached(state, definition.id)) {
-      state.achievements[definition.id] = mergeAchievement(state.achievements[definition.id], {
-        unlockedAt: trustedAt,
-        seen: false,
-      })
-    }
+    if (achievement.seen && state.achievements[id]) state.achievements[id].seen = true
   }
 
   const settings = delta.settings
@@ -577,7 +616,7 @@ function applyAccountDelta(
     const selectedTitle = settings.selectedTitle
     if (selectedTitle === null) state.profile.selectedTitle = null
     else {
-      const achievement = PLAYER_SYNC_ACHIEVEMENTS.find(({ title }) => title === selectedTitle)
+      const achievement = ACHIEVEMENT_CATALOG.find(({ name }) => name === selectedTitle)
       if (achievement && selectedTitle !== undefined && state.achievements[achievement.id]) {
         state.profile.selectedTitle = selectedTitle
       }
@@ -588,6 +627,16 @@ function applyAccountDelta(
   if (settings.strongInput !== undefined) state.profile.strongInput = settings.strongInput
   if (settings.reducedMotion !== undefined) state.profile.reducedMotion = settings.reducedMotion
   if (settings.haptics !== undefined) state.profile.haptics = settings.haptics
+  const level = levelProgress(totalAchievementXp(state)).level
+  if (settings.frameId !== undefined && availableFrameIds(level).includes(settings.frameId)) {
+    state.profile.frameId = settings.frameId
+  }
+  if (
+    settings.recordBookThemeId !== undefined
+    && availableThemeIds(level).includes(settings.recordBookThemeId)
+  ) {
+    state.profile.recordBookThemeId = settings.recordBookThemeId
+  }
   return state
 }
 
@@ -631,7 +680,7 @@ export function applyPlayerOperation(
   operation: AcceptedPlayerProgressOperationV1,
   serverAssignment?: SyncProgressState['daily'] | null
 ): SyncProgressState {
-  let state = applyAccountDelta(input, operation, operation.acceptedAt)
+  let state = applyAccountDelta(input, operation, operation.acceptedAt, 'server')
   if (serverAssignment && serverAssignment.dayKey === operation.playDayKey) {
     const daily = state.daily.dayKey === serverAssignment.dayKey
       && state.daily.questId === serverAssignment.questId
@@ -647,7 +696,7 @@ export function applyPendingPlayerOperation(
   input: SyncProgressState,
   operation: PlayerProgressOperationV1
 ): SyncProgressState {
-  const state = applyAccountDelta(input, operation, operation.createdAt)
+  const state = applyAccountDelta(input, operation, operation.createdAt, 'optimistic')
   return {
     ...state,
     daily: dailyEvidence(state.daily, operation, null),

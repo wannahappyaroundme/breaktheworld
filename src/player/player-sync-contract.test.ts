@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { ACHIEVEMENTS } from '../progress/catalog'
 import { createDefaultProgress } from '../progress/defaults'
 import type { ProgressStateV1 } from '../progress/types'
-import { ACHIEVEMENT_CATALOG } from '../../supabase/functions/_shared/achievement-catalog'
+import {
+  ACHIEVEMENT_CATALOG,
+  ACHIEVEMENT_CATALOG_PUBLISHED_AT,
+  levelProgress,
+  totalAchievementXp,
+} from '../../supabase/functions/_shared/achievement-catalog'
 import {
   applyPendingPlayerOperation,
   applyPlayerOperation,
@@ -16,6 +21,7 @@ import {
 const OPERATION_ID = '11111111-1111-4111-8111-111111111111'
 const DEVICE_ID = '22222222-2222-4222-8222-222222222222'
 const NOW = '2026-07-16T12:00:00.000Z'
+const SERVER_NOW = '2026-07-18T12:00:00.000Z'
 
 function zero(seed = '33333333-3333-4333-8333-333333333333'): SyncProgressState {
   return createDefaultProgress(seed)
@@ -178,18 +184,70 @@ describe('player sync contract', () => {
     expect(merged.profile.haptics).toBe(false)
   })
 
-  it('keeps earliest achievement unlock and monotonic seen state', () => {
-    const later = accepted({
-      achievements: { first_destroy: { unlockedAt: '2026-07-16T12:00:00.000Z', seen: false } },
-    })
-    const earlierSeen = accepted({
-      achievements: { first_destroy: { unlockedAt: '2026-07-15T12:00:00.000Z', seen: true } },
-    }, { operationId: '55555555-5555-4555-8555-555555555555', acceptedOrder: 2 })
-    const state = applyPlayerOperation(applyPlayerOperation(zero(), later), earlierSeen)
-    expect(state.achievements.first_destroy).toEqual({
-      unlockedAt: '2026-07-15T12:00:00.000Z',
-      seen: true,
-    })
+  it('ignores forged unlock timestamps and seen claims for achievements the server cannot reach', () => {
+    const next = applyPlayerOperation(zero(), accepted({
+      achievements: {
+        weapons_21x25: { unlockedAt: '2000-01-01T00:00:00.000Z', seen: true },
+      },
+    }, { acceptedAt: SERVER_NOW }))
+    expect(next.achievements.weapons_21x25).toBeUndefined()
+  })
+
+  it('uses trusted accepted time after counters satisfy a condition and only then merges seen', () => {
+    const reached = applyPlayerOperation(zero(), accepted({ validHits: 1 }, {
+      acceptedAt: SERVER_NOW,
+    }))
+    expect(reached.achievements.first_hit).toEqual({ unlockedAt: SERVER_NOW, seen: false })
+
+    const seen = applyPlayerOperation(reached, accepted({
+      achievements: {
+        first_hit: { unlockedAt: '2000-01-01T00:00:00.000Z', seen: true },
+      },
+    }, {
+      operationId: '55555555-5555-4555-8555-555555555555',
+      acceptedOrder: 2,
+      acceptedAt: '2026-07-18T12:01:00.000Z',
+    }))
+    expect(seen.achievements.first_hit).toEqual({ unlockedAt: SERVER_NOW, seen: true })
+  })
+
+  it('uses created time for optimistic reachability without trusting the claimed timestamp', () => {
+    const next = applyPendingPlayerOperation(zero(), operation({
+      validHits: 1,
+      achievements: {
+        first_hit: { unlockedAt: '2000-01-01T00:00:00.000Z', seen: true },
+      },
+    }, { createdAt: SERVER_NOW }))
+    expect(next.achievements.first_hit).toEqual({ unlockedAt: SERVER_NOW, seen: true })
+  })
+
+  it('accepts every catalog achievement in operation version one and rejects a 33rd ID', () => {
+    const achievements = Object.fromEntries(ACHIEVEMENT_CATALOG.map(({ id }) => [id, {
+      unlockedAt: NOW,
+      seen: false,
+    }]))
+    expect(parseSyncBatch([operation({ achievements })])[0].operationVersion).toBe(1)
+    expect(() => parseSyncBatch([operation({ achievements: {
+      ...achievements,
+      forged_33rd: { unlockedAt: NOW, seen: false },
+    } })])).toThrow('invalid_sync_batch')
+  })
+
+  it('authorizes exact cosmetic selections from the server-derived level', () => {
+    const levelFive = zero()
+    levelFive.lifetime.validHits = 100
+    levelFive.lifetime.chargedFinishers = 10
+    levelFive.profile.frameId = 'first_crack'
+
+    const locked = applyPlayerOperation(levelFive, accepted({
+      settings: { frameId: 'legend_crown', recordBookThemeId: 'legend_crown' },
+    }, { acceptedAt: SERVER_NOW }))
+    expect(locked.profile.frameId).toBe('first_crack')
+    expect(locked.profile.recordBookThemeId).toBe('default')
+
+    expect(() => parseSyncBatch([operation({
+      settings: { frameId: 'unknown_frame' } as never,
+    })])).toThrow('invalid_sync_batch')
   })
 
   it('uses only the explicit server assignment for daily evidence and completes once', () => {
@@ -225,7 +283,7 @@ describe('player sync contract', () => {
     expect(ACHIEVEMENTS.map(({ next, ...definition }) => definition)).toEqual(ACHIEVEMENT_CATALOG)
   })
 
-  it('is deterministic across 200 bounded accepted operation lists and batch groupings', () => {
+  it('is deterministic across 200 bounded multi-device operation lists and batch groupings', () => {
     let random = 0x12345678
     const nextRandom = () => {
       random = (Math.imul(random, 1664525) + 1013904223) >>> 0
@@ -233,25 +291,50 @@ describe('player sync contract', () => {
     }
 
     for (let sample = 0; sample < 200; sample += 1) {
-      const list = Array.from({ length: 1 + (nextRandom() % 12) }, (_, index) => accepted({
-        validHits: nextRandom() % 5,
-        chargedFinishers: nextRandom() % 3,
+      const list = Array.from({ length: 4 + (nextRandom() % 9) }, (_, index) => accepted({
+        validHits: index === 0 ? 100 : nextRandom() % 5,
+        chargedFinishers: index === 0 ? 10 : nextRandom() % 3,
         totalTargets: nextRandom() % 2,
         bestCombo: nextRandom() % 100,
         addDistinctWeaponIds: nextRandom() % 2 === 0 ? ['hammer'] : ['cat'],
+        settings: index === 0 ? { frameId: 'first_crack' } : {},
       }, {
+        deviceId: index % 2 === 0
+          ? DEVICE_ID
+          : '66666666-6666-4666-8666-666666666666',
         operationId: `${String(sample + 1).padStart(8, '0')}-${String(index + 1).padStart(4, '0')}-4000-8000-${String(sample * 20 + index + 1).padStart(12, '0')}`,
         clientSeq: index + 1,
         acceptedOrder: index + 1,
+        acceptedAt: new Date(Date.parse(SERVER_NOW) + index * 1_000).toISOString(),
       }))
-      const apply = (items: AcceptedPlayerProgressOperationV1[]) => items.reduce(
-        (state, item) => applyPlayerOperation(state, item),
-        zero()
+      const applyGroups = (groups: AcceptedPlayerProgressOperationV1[][]) => groups.reduce(
+        (state, group) => group.reduce(
+          (groupState, item) => applyPlayerOperation(groupState, item),
+          state,
+        ),
+        zero(),
       )
-      const whole = apply(list)
-      const split = apply([...list.slice(0, 3), ...list.slice(3)])
-      expect(JSON.stringify(split)).toBe(JSON.stringify(whole))
-      expect(JSON.stringify(apply(list))).toBe(JSON.stringify(whole))
+      const whole = applyGroups([list])
+      const split = applyGroups([list.slice(0, 1), list.slice(1, 3), list.slice(3)])
+      const projection = (state: SyncProgressState) => ({
+        lifetime: state.lifetime,
+        byWeapon: state.byWeapon,
+        byTarget: state.byTarget,
+        achievementIds: Object.keys(state.achievements).sort(),
+        xp: totalAchievementXp(state),
+        level: levelProgress(totalAchievementXp(state)).level,
+        frameId: state.profile.frameId,
+        recordBookThemeId: state.profile.recordBookThemeId,
+      })
+      expect(projection(split)).toEqual(projection(whole))
+      expect(projection(applyGroups(list.map((item) => [item])))).toEqual(projection(whole))
     }
+  })
+
+  it('uses the publication epoch when existing counters are catalog-backfilled', () => {
+    const old = zero()
+    old.lifetime.validHits = 1_000
+    const next = applyPlayerOperation(old, accepted({}, { acceptedAt: SERVER_NOW }))
+    expect(next.achievements.hits_1000?.unlockedAt).toBe(ACHIEVEMENT_CATALOG_PUBLISHED_AT)
   })
 })

@@ -66,6 +66,27 @@ function advanced(state: ProgressStateV1, hits: number): ProgressStateV1 {
 }
 
 describe('player sync store', () => {
+  it('queues exact frame and record-book theme setting changes', async () => {
+    const local = new LocalStore()
+    const queue = outbox()
+    const store = new PlayerSyncStore(USER_ID, local, queue.adapter, {
+      nowIso: () => '2026-07-16T12:00:00.000Z',
+    })
+    const next = structuredClone(local.state)
+    next.profile.frameId = 'first_crack'
+    next.profile.recordBookThemeId = 'electric_night'
+    store.save(next, 'unlock')
+    await store.whenIdle()
+    expect(queue.adapter.appendDraft).toHaveBeenCalledWith(USER_ID, expect.objectContaining({
+      delta: expect.objectContaining({
+        settings: expect.objectContaining({
+          frameId: 'first_crack',
+          recordBookThemeId: 'electric_night',
+        }),
+      }),
+    }))
+  })
+
   it('requires an immutable player UUID and cannot be constructed for a guest', () => {
     const local = new LocalStore()
     const queue = outbox()
