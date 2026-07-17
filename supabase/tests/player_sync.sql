@@ -142,6 +142,26 @@ select is(
   0,
   'new profile starts with zero destroyed targets'
 );
+select is(
+  (select (state->>'schemaVersion')::integer from public.player_progress where user_id = '61000000-0000-4000-8000-000000000001'),
+  1,
+  'new profile keeps progress schema version one'
+);
+select is(
+  (select (state->>'catalogVersion')::integer from public.player_progress where user_id = '61000000-0000-4000-8000-000000000001'),
+  2,
+  'new profile starts on achievement catalog version two'
+);
+select is(
+  (select state #>> '{profile,frameId}' from public.player_progress where user_id = '61000000-0000-4000-8000-000000000001'),
+  'default',
+  'new profile starts with the default frame'
+);
+select is(
+  (select state #>> '{profile,recordBookThemeId}' from public.player_progress where user_id = '61000000-0000-4000-8000-000000000001'),
+  'default',
+  'new profile starts with the default record-book theme'
+);
 
 set local role service_role;
 select is(

@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(97);
+select plan(113);
 
 select has_type('public', 'quest_event_type', 'quest event enum exists');
 select has_type('public', 'analytics_event_type', 'analytics event enum exists');
@@ -10,14 +10,22 @@ select has_table('public', 'admin_users', 'admin table exists');
 select has_table('public', 'quest_catalog', 'quest table exists');
 select has_table('public', 'feature_flags', 'flag table exists');
 select has_table('public', 'analytics_events', 'analytics event table exists');
+select has_column('public', 'analytics_events', 'dimension', 'analytics event dimension exists');
 select has_table('public', 'analytics_rate_limits', 'analytics rate-limit table exists');
 select has_view('public', 'analytics_daily', 'aggregate analytics view exists');
+select has_column('public', 'analytics_daily', 'dimension', 'aggregate analytics dimension exists');
 select has_function('public', 'is_admin', array[]::text[], 'central admin function exists');
 select has_function(
   'public',
   'ingest_analytics',
   array['text', 'analytics_event_type', 'date', 'text', 'integer'],
   'atomic analytics RPC exists'
+);
+select has_function(
+  'public',
+  'ingest_analytics_v2',
+  array['text', 'analytics_event_type', 'date', 'text', 'integer', 'text'],
+  'dimension-aware analytics RPC exists'
 );
 select is(
   enum_range(null::public.quest_event_type)::text[],
@@ -28,7 +36,9 @@ select is(
   enum_range(null::public.analytics_event_type)::text[],
   array[
     'visit', 'first_hit', 'first_destroy', 'weapon_use', 'target_finish_actions',
-    'charge_release', 'charge_cancel', 'quest_complete', 'share_complete'
+    'charge_release', 'charge_cancel', 'quest_complete', 'share_complete',
+    'achievement_hub_opened', 'achievement_unlocked', 'level_reached',
+    'cosmetic_selected', 'profile_step_viewed'
   ]::text[],
   'analytics event enum exposes only approved values'
 );
@@ -112,6 +122,25 @@ select is(
   'ingest RPC fixes its search path'
 );
 select ok(
+  (
+    select p.prosecdef
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'ingest_analytics_v2'
+  ),
+  'dimension-aware ingest RPC is security definer'
+);
+select is(
+  (
+    select p.proconfig
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'ingest_analytics_v2'
+  ),
+  array['search_path=public, pg_temp']::text[],
+  'dimension-aware ingest RPC fixes its search path'
+);
+select ok(
   coalesce((select 'security_invoker=true' = any (c.reloptions) from pg_class c where c.oid = 'public.analytics_daily'::regclass), false),
   'aggregate view runs with caller permissions'
 );
@@ -142,6 +171,18 @@ select ok(
 select ok(
   has_function_privilege('service_role', 'public.ingest_analytics(text,public.analytics_event_type,date,text,integer)', 'execute'),
   'only the service role can execute ingest RPC'
+);
+select ok(
+  not has_function_privilege('anon', 'public.ingest_analytics_v2(text,public.analytics_event_type,date,text,integer,text)', 'execute'),
+  'anon cannot execute the dimension-aware ingest RPC'
+);
+select ok(
+  not has_function_privilege('authenticated', 'public.ingest_analytics_v2(text,public.analytics_event_type,date,text,integer,text)', 'execute'),
+  'authenticated users cannot execute the dimension-aware ingest RPC'
+);
+select ok(
+  has_function_privilege('service_role', 'public.ingest_analytics_v2(text,public.analytics_event_type,date,text,integer,text)', 'execute'),
+  'only the service role can execute the dimension-aware ingest RPC'
 );
 
 insert into auth.users (id, aud, role, email, encrypted_password, created_at, updated_at)
@@ -221,6 +262,11 @@ select throws_like(
   $$insert into public.analytics_events (event_type, day_key, install_hash, value) values ('visit', current_date, repeat('f', 64), 1001)$$,
   '%violates check constraint%',
   'analytics metric values stay within bounds'
+);
+select throws_like(
+  $$insert into public.analytics_events (event_type, day_key, install_hash, dimension) values ('visit', current_date, repeat('f', 64), 'unsafe text')$$,
+  '%violates check constraint%',
+  'analytics dimensions enforce the approved safe shape'
 );
 select throws_like(
   $$insert into public.analytics_rate_limits (install_hash, bucket_start, bucket_type, count) values (repeat('f', 64), now(), 'hour', 1)$$,
@@ -336,6 +382,41 @@ select is(
   1::bigint,
   'valid ingest inserts exactly one event'
 );
+select is(
+  (select dimension from public.analytics_events where install_hash = repeat('a', 64)),
+  null,
+  'legacy ingest stores a null dimension'
+);
+
+set local role service_role;
+select lives_ok(
+  $$select public.ingest_analytics_v2(repeat('9', 64), 'achievement_unlocked', current_date, null, 50, 'first_hit')$$,
+  'service role can ingest one approved dimension event'
+);
+select throws_ok(
+  $$select public.ingest_analytics_v2(repeat('8', 64), 'achievement_unlocked', current_date, null, 50, 'user_supplied_text')$$,
+  '22023',
+  'invalid analytics event',
+  'dimension-aware RPC rejects an unapproved dimension'
+);
+select throws_ok(
+  $$select public.ingest_analytics_v2(repeat('8', 64), 'level_reached', current_date, null, 19, 'level_20')$$,
+  '22023',
+  'invalid analytics event',
+  'dimension-aware RPC rejects a mismatched level and value'
+);
+select throws_ok(
+  $$select public.ingest_analytics_v2(repeat('8', 64), 'visit', current_date, null, 1, 'hud')$$,
+  '22023',
+  'invalid analytics event',
+  'dimension-aware RPC requires null dimensions for legacy events'
+);
+reset role;
+select is(
+  (select dimension from public.analytics_events where install_hash = repeat('9', 64)),
+  'first_hit',
+  'approved dimension is stored without raw user text'
+);
 
 set local role service_role;
 select throws_ok(
@@ -434,6 +515,7 @@ reset role;
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '10000000-0000-0000-0000-000000000001', true);
+select is((select count(*) from public.analytics_events), 0::bigint, 'non-admin still cannot read dimension analytics rows');
 select is((select count(*) from public.analytics_daily), 0::bigint, 'invoker view preserves RLS for non-admins');
 reset role;
 

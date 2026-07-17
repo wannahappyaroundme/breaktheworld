@@ -44,6 +44,30 @@ describe('ingest analytics handler', () => {
     expect(JSON.stringify(result)).not.toContain(HASH)
   })
 
+  it('calls the v2 RPC only for an approved dimension event', async () => {
+    const rpc = vi.fn(async () => ({ error: null }))
+    const handler = createIngestHandler({ rpc })
+    const progressItem = {
+      ...item,
+      eventType: 'achievement_unlocked',
+      weaponId: null,
+      dimension: 'first_hit',
+      value: 50,
+    }
+
+    const result = await responseBody(await handler(request([progressItem])))
+
+    expect(result).toEqual({ status: 200, body: { accepted: 1, rejected: 0 } })
+    expect(rpc).toHaveBeenCalledWith('ingest_analytics_v2', {
+      p_install_hash: HASH,
+      p_event_type: 'achievement_unlocked',
+      p_day_key: '2026-07-16',
+      p_weapon_id: null,
+      p_value: 50,
+      p_dimension: 'first_hit',
+    })
+  })
+
   it.each([
     ['non-POST method', new Request('http://local/ingest-analytics', { method: 'GET' })],
     ['malformed JSON', new Request('http://local/ingest-analytics', { method: 'POST', body: '{' })],

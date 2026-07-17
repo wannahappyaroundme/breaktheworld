@@ -21,13 +21,15 @@ function rejectedCount(input: unknown): number {
 }
 
 function rpcParameters(item: AnalyticsPayload): Record<string, unknown> {
-  return {
+  const parameters: Record<string, unknown> = {
     p_install_hash: item.installHash,
     p_event_type: item.eventType,
     p_day_key: item.dayKey,
     p_weapon_id: item.weaponId,
     p_value: item.value,
   }
+  if (item.dimension !== null) parameters.p_dimension = item.dimension
+  return parameters
 }
 
 export function createIngestHandler(rpcClient: AnalyticsRpcClient) {
@@ -55,7 +57,10 @@ export function createIngestHandler(rpcClient: AnalyticsRpcClient) {
     for (const item of validated.items) {
       let result: RpcResult
       try {
-        result = await rpcClient.rpc('ingest_analytics', rpcParameters(item))
+        result = await rpcClient.rpc(
+          item.dimension === null ? 'ingest_analytics' : 'ingest_analytics_v2',
+          rpcParameters(item)
+        )
       } catch {
         return counts(accepted, validated.items.length - accepted, 500)
       }

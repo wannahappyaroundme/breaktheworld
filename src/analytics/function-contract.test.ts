@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import { validateAnalyticsBatch } from '../../supabase/functions/_shared/analytics-contract'
+import {
+  ACHIEVEMENT_CATALOG,
+  availableFrameIds,
+  availableThemeIds,
+} from '../../supabase/functions/_shared/achievement-catalog'
 import { APPROVED_ANALYTICS_WEAPON_IDS } from '../../supabase/functions/_shared/weapon-ids'
 import { KNOWN_WEAPON_IDS } from '../game-progress'
 
@@ -15,7 +20,10 @@ const valid = {
 
 describe('ingest analytics function contract', () => {
   it('accepts only arrays of 1 through 20 exact payloads', () => {
-    expect(validateAnalyticsBatch([valid])).toEqual({ ok: true, items: [valid] })
+    expect(validateAnalyticsBatch([valid])).toEqual({
+      ok: true,
+      items: [{ ...valid, dimension: null }],
+    })
     expect(validateAnalyticsBatch([])).toEqual({ ok: false })
     expect(validateAnalyticsBatch(Array.from({ length: 21 }, () => valid))).toEqual({ ok: false })
     expect(validateAnalyticsBatch([{ ...valid, rawSeed: 'private' }])).toEqual({ ok: false })
@@ -44,5 +52,73 @@ describe('ingest analytics function contract', () => {
   it('keeps the server allowlist identical to the 21 playable weapon IDs', () => {
     expect([...APPROVED_ANALYTICS_WEAPON_IDS].sort()).toEqual([...KNOWN_WEAPON_IDS].sort())
     expect(APPROVED_ANALYTICS_WEAPON_IDS).toHaveLength(21)
+  })
+
+  it('accepts exact achievement dimensions and XP without accepting arbitrary text', () => {
+    for (const { id, xp } of ACHIEVEMENT_CATALOG) {
+      expect(validateAnalyticsBatch([{
+        ...valid,
+        eventType: 'achievement_unlocked',
+        weaponId: null,
+        dimension: id,
+        value: xp,
+      }]).ok).toBe(true)
+    }
+    expect(validateAnalyticsBatch([{
+      ...valid,
+      eventType: 'achievement_unlocked',
+      weaponId: null,
+      dimension: 'user supplied text',
+      value: 50,
+    }])).toEqual({ ok: false })
+    expect(validateAnalyticsBatch([{
+      ...valid,
+      eventType: 'achievement_unlocked',
+      weaponId: null,
+      dimension: 'first_hit',
+      value: 400,
+    }])).toEqual({ ok: false })
+  })
+
+  it('accepts only approved hub, level, cosmetic, and profile-step combinations', () => {
+    const approved = [
+      { eventType: 'achievement_hub_opened', dimension: 'hud', value: 1 },
+      { eventType: 'level_reached', dimension: 'level_20', value: 20 },
+      ...[...new Set([...availableFrameIds(20), ...availableThemeIds(20)])]
+        .map((dimension) => ({ eventType: 'cosmetic_selected', dimension, value: 1 })),
+      { eventType: 'profile_step_viewed', dimension: 'complete', value: 1 },
+    ]
+    for (const progressEvent of approved) {
+      expect(validateAnalyticsBatch([{
+        ...valid,
+        ...progressEvent,
+        weaponId: null,
+      }]).ok).toBe(true)
+    }
+    expect(validateAnalyticsBatch([{
+      ...valid,
+      eventType: 'level_reached',
+      weaponId: null,
+      dimension: 'level_20',
+      value: 19,
+    }])).toEqual({ ok: false })
+    expect(validateAnalyticsBatch([{
+      ...valid,
+      eventType: 'profile_step_viewed',
+      weaponId: null,
+      dimension: 'profile-id-from-user',
+      value: 1,
+    }])).toEqual({ ok: false })
+  })
+
+  it('requires null dimensions for legacy events and no weapon IDs for progress events', () => {
+    expect(validateAnalyticsBatch([{ ...valid, dimension: null }]).ok).toBe(true)
+    expect(validateAnalyticsBatch([{ ...valid, dimension: 'hammer' }])).toEqual({ ok: false })
+    expect(validateAnalyticsBatch([{
+      ...valid,
+      eventType: 'achievement_hub_opened',
+      dimension: 'hud',
+      value: 1,
+    }])).toEqual({ ok: false })
   })
 })
