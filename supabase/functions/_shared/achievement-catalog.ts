@@ -50,6 +50,7 @@ export interface AchievementProgressSource {
 }
 
 export const ACHIEVEMENT_CATALOG_VERSION = 2
+export const ACHIEVEMENT_CATALOG_PUBLISHED_AT = '2026-07-17T00:00:00.000Z'
 
 export const TIER_XP = Object.freeze({
   easy: 50,

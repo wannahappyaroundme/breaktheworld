@@ -109,6 +109,59 @@ function useCharacter(weaponId: string, actionId: number) {
 }
 
 describe('parseProgress', () => {
+  it('loads an old schema-one state with default cosmetics and all valid legacy progress', () => {
+    const legacyState = createDefaultProgress('legacy-seed')
+    legacyState.lifetime.validHits = 8
+    legacyState.achievements.first_destroy = {
+      unlockedAt: '2026-07-16T01:02:03.000Z',
+      seen: true,
+    }
+    legacyState.profile.skins.cinnamoroll = 'classic'
+    const raw = structuredClone(legacyState) as unknown as {
+      profile: Record<string, unknown>
+    }
+    delete raw.profile.frameId
+    delete raw.profile.recordBookThemeId
+
+    const parsed = parseProgress(raw, KNOWN_WEAPONS, KNOWN_MOVES)
+
+    expect(parsed.schemaVersion).toBe(1)
+    expect(parsed.profile.frameId).toBe('default')
+    expect(parsed.profile.recordBookThemeId).toBe('default')
+    expect(parsed.lifetime.validHits).toBe(8)
+    expect(parsed.achievements.first_destroy).toEqual(
+      legacyState.achievements.first_destroy
+    )
+    expect(parsed.profile.skins).toEqual({ cinnamoroll: 'classic' })
+  })
+
+  it('resets locked or unknown projected cosmetics without removing character skins', () => {
+    const projected = createDefaultProgress('projected-seed')
+    projected.achievements.hits_1000 = {
+      unlockedAt: '2026-07-16T01:02:03.000Z',
+      seen: true,
+    }
+    projected.achievements.first_hit = {
+      unlockedAt: '2026-07-16T01:02:04.000Z',
+      seen: true,
+    }
+    projected.profile.skins = { cinnamoroll: 'classic', ditto: 'classic' }
+    const raw = structuredClone(projected) as unknown as {
+      profile: Record<string, unknown>
+    }
+    raw.profile.frameId = 'first_crack'
+    raw.profile.recordBookThemeId = 'unknown_theme'
+
+    const parsed = parseProgress(raw, KNOWN_WEAPONS, KNOWN_MOVES)
+
+    expect(parsed.profile.frameId).toBe('default')
+    expect(parsed.profile.recordBookThemeId).toBe('default')
+    expect(parsed.profile.skins).toEqual({
+      cinnamoroll: 'classic',
+      ditto: 'classic',
+    })
+  })
+
   it('recovers valid fields independently and drops invalid counters and unknown IDs', () => {
     const parsed = parseProgress({
       schemaVersion: 99,
@@ -720,6 +773,7 @@ describe('ProgressStore checkpoints', () => {
     'targetDestroy',
     'dailyRollover',
     'unlock',
+    'achievementBackfill',
     'setting',
     'scopeChange',
     'pagehide',

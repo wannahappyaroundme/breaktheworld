@@ -7,6 +7,7 @@ import { kstDayKey } from './day'
 import { reduceProgress } from './reducer'
 import {
   ACHIEVEMENT_CATALOG,
+  ACHIEVEMENT_CATALOG_PUBLISHED_AT,
   ACHIEVEMENT_CATALOG_VERSION,
   ACHIEVEMENTS,
   BUILT_IN_CATALOG,
@@ -631,6 +632,7 @@ describe('permanent achievements', () => {
 
   it('defines the approved immutable achievement and XP contract', () => {
     expect(ACHIEVEMENT_CATALOG_VERSION).toBe(2)
+    expect(ACHIEVEMENT_CATALOG_PUBLISHED_AT).toBe('2026-07-17T00:00:00.000Z')
     expect(ACHIEVEMENTS).toHaveLength(32)
     expect(new Set(ACHIEVEMENTS.map(({ id }) => id)).size).toBe(32)
     expect(countByTier()).toEqual({

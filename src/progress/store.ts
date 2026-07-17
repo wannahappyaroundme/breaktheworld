@@ -12,6 +12,7 @@ export type CheckpointReason =
   | 'targetDestroy'
   | 'dailyRollover'
   | 'unlock'
+  | 'achievementBackfill'
   | 'setting'
   | 'scopeChange'
   | 'pagehide'

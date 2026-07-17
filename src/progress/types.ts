@@ -12,6 +12,19 @@ export interface DailyQuestSnapshot {
   distinct: 'weaponId' | null
 }
 
+export type ProfileFrameId =
+  | 'default'
+  | 'first_crack'
+  | 'electric_night'
+  | 'coral_burst'
+  | 'legend_crown'
+
+export type RecordBookThemeId =
+  | 'default'
+  | 'electric_night'
+  | 'coral_burst'
+  | 'legend_crown'
+
 export interface ProgressStateV1 {
   schemaVersion: 1
   catalogVersion: number
@@ -40,6 +53,8 @@ export interface ProgressStateV1 {
   profile: {
     selectedTitle: string | null
     skins: Record<string, string>
+    frameId: ProfileFrameId
+    recordBookThemeId: RecordBookThemeId
     strongInput: 'hold' | 'doubleTap'
     reducedMotion: boolean
     haptics: boolean

@@ -456,6 +456,10 @@ export class Game {
       analytics: this.analytics,
       knownWeaponIds: KNOWN_WEAPON_IDS,
       knownMoveIds: KNOWN_MOVE_IDS,
+      gamificationEnabled: (
+        this.questCatalogResolved
+        && this.remoteConfig.active.gamification_enabled
+      ),
       deferDailyAssignment: !this.questCatalogResolved,
       onDailyQuestTransition: (previous, next) => {
         this.analytics.trackQuestTransition(previous, next, 'user', true)

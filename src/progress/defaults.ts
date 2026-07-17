@@ -32,6 +32,8 @@ export function createDefaultProgress(installSeed: string): ProgressStateV1 {
     profile: {
       selectedTitle: null,
       skins: {},
+      frameId: 'default',
+      recordBookThemeId: 'default',
       strongInput: 'hold',
       reducedMotion: false,
       haptics: true,

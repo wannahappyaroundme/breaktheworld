@@ -8,6 +8,7 @@ import {
 } from './progress/store'
 import type { ProgressStateV1 } from './progress/types'
 import {
+  ACHIEVEMENT_CATALOG,
   BUILT_IN_QUESTS,
   createQuestDefinition,
   type QuestCatalogSnapshot,
@@ -61,6 +62,7 @@ function coordinator(options: {
   notify?: ReturnType<typeof vi.fn>
   analytics?: ProgressAnalyticsSink
   deferDailyAssignment?: boolean
+  gamificationEnabled?: boolean
   onDailyQuestTransition?: (previous: string | null, next: string | null) => void
 } = {}) {
   const store = new FakeStore(options.state ?? createDefaultProgress('seed'))
@@ -73,6 +75,7 @@ function coordinator(options: {
     notify,
     analytics: options.analytics,
     deferDailyAssignment: options.deferDailyAssignment,
+    gamificationEnabled: options.gamificationEnabled,
     onDailyQuestTransition: options.onDailyQuestTransition,
     knownWeaponIds: KNOWN_WEAPON_IDS,
     knownMoveIds: KNOWN_MOVE_IDS,
@@ -95,7 +98,173 @@ function actionEvents(actionId = 1, targetRunId = 1): GameEvent[] {
   ]
 }
 
+function stateAtXp(xp: number): ProgressStateV1 {
+  const state = createDefaultProgress(`xp-${xp}`)
+  let remaining = xp
+  const definitions = [...ACHIEVEMENT_CATALOG]
+    .sort((left, right) => right.xp - left.xp)
+  for (const definition of definitions) {
+    if (definition.xp > remaining) continue
+    state.achievements[definition.id] = {
+      unlockedAt: '2026-07-16T01:02:03.000Z',
+      seen: true,
+    }
+    remaining -= definition.xp
+  }
+  if (remaining !== 0) throw new Error(`unrepresentable achievement XP: ${xp}`)
+  return state
+}
+
 describe('GameProgressCoordinator', () => {
+  it('reconciles provable achievements before daily assignment without startup notices', () => {
+    const state = createDefaultProgress('legacy-counters')
+    state.lifetime.validHits = 1_000
+    state.lifetime.totalTargets = 100
+    const { progress, store, notify } = coordinator({ state })
+
+    expect(progress.state.achievements).toMatchObject({
+      first_hit: expect.anything(),
+      hits_100: expect.anything(),
+      hits_1000: expect.anything(),
+      first_destroy: expect.anything(),
+      destroys_25: expect.anything(),
+      destroys_100: expect.anything(),
+    })
+    expect(progress.state.daily.questId).toBe('targets_3')
+    expect(progress.state.achievements.first_hit).toEqual({
+      unlockedAt: '2026-07-17T00:00:00.000Z',
+      seen: false,
+    })
+    expect(state.achievements).toEqual({})
+    expect(store.saves).toHaveLength(1)
+    expect(store.saves[0].reason).toBe('achievementBackfill')
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('does not backfill before remote flags settle and preserves counters when the gate closes', () => {
+    const state = createDefaultProgress('closed-before-resolution')
+    state.lifetime.validHits = 100
+    const { progress, store, notify } = coordinator({
+      state,
+      deferDailyAssignment: true,
+      gamificationEnabled: false,
+    })
+
+    expect(progress.state.achievements).toEqual({})
+    expect(progress.state.daily.questId).toBe('')
+    expect(store.saves).toHaveLength(0)
+
+    expect(progress.ensureDailyQuest('2026-07-17', { gamificationEnabled: false })).toBe(true)
+    expect(progress.state.lifetime.validHits).toBe(100)
+    expect(progress.state.achievements).toEqual({})
+    expect(store.saves.map((save) => save.reason)).toEqual(['dailyRollover'])
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('backfills once at publication time after the enabled gate settles', () => {
+    const legacyUnlockedAt = '2026-07-16T01:02:03.000Z'
+    const state = createDefaultProgress('enabled-after-resolution')
+    state.lifetime.validHits = 100
+    state.achievements.first_hit = { unlockedAt: legacyUnlockedAt, seen: true }
+    const { progress, store, notify } = coordinator({
+      state,
+      deferDailyAssignment: true,
+      gamificationEnabled: false,
+    })
+
+    expect(progress.ensureDailyQuest('2026-07-17', { gamificationEnabled: true })).toBe(true)
+    expect(progress.state.achievements.first_hit).toEqual({
+      unlockedAt: legacyUnlockedAt,
+      seen: true,
+    })
+    expect(progress.state.achievements.hits_100).toEqual({
+      unlockedAt: '2026-07-17T00:00:00.000Z',
+      seen: false,
+    })
+    expect(store.saves.map((save) => save.reason)).toEqual([
+      'achievementBackfill',
+      'dailyRollover',
+    ])
+    expect(notify).not.toHaveBeenCalled()
+
+    expect(progress.ensureDailyQuest('2026-07-17', { gamificationEnabled: true })).toBe(false)
+    expect(store.saves.map((save) => save.reason)).toEqual([
+      'achievementBackfill',
+      'dailyRollover',
+    ])
+  })
+
+  it('does not persist reconciliation when every provable achievement already exists', () => {
+    const state = createDefaultProgress('already-reconciled')
+    state.lifetime.validHits = 1_000
+    state.lifetime.totalTargets = 100
+    for (const id of [
+      'first_hit',
+      'hits_100',
+      'hits_1000',
+      'first_destroy',
+      'destroys_25',
+      'destroys_100',
+    ]) {
+      state.achievements[id] = {
+        unlockedAt: '2026-07-16T01:02:03.000Z',
+        seen: false,
+      }
+    }
+
+    const { store, notify } = coordinator({ state })
+
+    expect(store.saves).toHaveLength(0)
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('groups simultaneous unlocks with XP and level transition before the daily notice', () => {
+    const state = createDefaultProgress('grouped-unlocks')
+    state.achievements.finisher_1 = {
+      unlockedAt: '2026-07-16T01:02:03.000Z',
+      seen: true,
+    }
+    const { progress, notify } = coordinator({ state })
+
+    const result = progress.dispatch([
+      actionEvents()[0],
+      actionEvents()[2],
+    ], 'targetDestroy')
+
+    expect(result.unlockedIds).toEqual(['first_hit', 'first_destroy'])
+    expect(result.xpGained).toBe(100)
+    expect(result.previousLevel).toBe(2)
+    expect(result.nextLevel).toBe(3)
+    expect(notify).toHaveBeenCalledTimes(2)
+    expect(notify).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      kind: 'achievement',
+      text: '업적 2개 달성, 경험치 +100, 레벨 3',
+    }))
+    expect(notify).toHaveBeenNthCalledWith(2, expect.objectContaining({ kind: 'quest' }))
+  })
+
+  it('rejects locked cosmetics and saves unlocked selections once only on change', () => {
+    const { progress, store } = coordinator({ state: stateAtXp(250) })
+
+    expect(progress.selectFrame('first_crack')).toBe(false)
+    expect(progress.replaceState(stateAtXp(300))).toBe(true)
+    expect(progress.selectFrame('first_crack')).toBe(true)
+    expect(progress.selectFrame('first_crack')).toBe(false)
+    expect(progress.state.profile.frameId).toBe('first_crack')
+    expect(store.saves).toHaveLength(1)
+    expect(store.saves[0].reason).toBe('setting')
+
+    store.saves.length = 0
+    expect(progress.replaceState(stateAtXp(1_200))).toBe(true)
+    expect(progress.selectRecordBookTheme('electric_night')).toBe(false)
+    expect(progress.replaceState(stateAtXp(1_250))).toBe(true)
+    expect(progress.selectRecordBookTheme('electric_night')).toBe(true)
+    expect(progress.selectRecordBookTheme('electric_night')).toBe(false)
+    expect(progress.state.profile.recordBookThemeId).toBe('electric_night')
+    expect(store.saves).toHaveLength(1)
+    expect(store.saves[0].reason).toBe('setting')
+  })
+
   it('replaces state without saving, tracking, notifying, or retaining dedupe evidence', () => {
     const track = vi.fn()
     const { progress, store, notify } = coordinator({ analytics: { track } })
@@ -195,9 +364,8 @@ describe('GameProgressCoordinator', () => {
     expect(store.saves.map((save) => save.reason)).toEqual(['targetDestroy', 'setting'])
   })
 
-  it('does not unlock already-qualified records from a setting-only checkpoint while gamification is disabled', () => {
+  it('does not unlock records from a setting-only checkpoint while gamification is disabled', () => {
     const state = createDefaultProgress('seed')
-    state.lifetime.totalTargets = 1
     const { progress, store, notify } = coordinator({ state })
     const initialDaily = structuredClone(progress.state.daily)
 

@@ -7,10 +7,18 @@ import {
   findBuiltInQuest,
   isSafeQuestId,
   isSafeQuestCopy,
+  availableFrameIds,
+  availableThemeIds,
+  levelProgress,
   questSnapshot,
+  totalAchievementXp,
   type QuestCatalogSnapshot,
 } from './catalog'
-import type { ProgressStateV1 } from './types'
+import type {
+  ProfileFrameId,
+  ProgressStateV1,
+  RecordBookThemeId,
+} from './types'
 
 const TITLES: ReadonlySet<string> = new Set(ACHIEVEMENTS.map((achievement) => achievement.name))
 const ISO_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-](\d{2}):(\d{2}))$/
@@ -227,6 +235,16 @@ function parseProfile(state: ProgressStateV1, value: unknown): void {
   }
   if (skins?.ditto === 'default' || skins?.ditto === 'classic') {
     state.profile.skins.ditto = skins.ditto
+  }
+
+  const level = levelProgress(totalAchievementXp(state)).level
+  const frames = new Set<string>(availableFrameIds(level))
+  if (typeof input.frameId === 'string' && frames.has(input.frameId)) {
+    state.profile.frameId = input.frameId as ProfileFrameId
+  }
+  const themes = new Set<string>(availableThemeIds(level))
+  if (typeof input.recordBookThemeId === 'string' && themes.has(input.recordBookThemeId)) {
+    state.profile.recordBookThemeId = input.recordBookThemeId as RecordBookThemeId
   }
 
   if (input.strongInput === 'hold' || input.strongInput === 'doubleTap') {

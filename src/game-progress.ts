@@ -1,10 +1,15 @@
 import { CHARACTER_SKINS } from './art/assets'
 import {
   ACHIEVEMENTS,
+  ACHIEVEMENT_CATALOG_PUBLISHED_AT,
   assignDailyQuest,
+  availableFrameIds,
+  availableThemeIds,
   createQuestDefinition,
   dailyNoticeTransitions,
+  levelProgress,
   questFromSnapshot,
+  totalAchievementXp,
   unlockAchievements,
   type QuestCatalogSnapshot,
 } from './progress/catalog'
@@ -22,7 +27,11 @@ import type {
   ProgressSaveResult,
   StorageAdapter,
 } from './progress/store'
-import type { ProgressStateV1 } from './progress/types'
+import type {
+  ProfileFrameId,
+  ProgressStateV1,
+  RecordBookThemeId,
+} from './progress/types'
 import type { NotificationInput } from './ui/notification-queue'
 import { CHARACTER_MOVE_IDS } from './weapons/character-catalog'
 import { CHARACTER_IDS } from './weapons/character-ids'
@@ -66,6 +75,7 @@ export interface GameProgressCoordinatorOptions {
   analytics?: ProgressAnalyticsSink
   knownWeaponIds?: readonly string[]
   knownMoveIds?: readonly string[]
+  gamificationEnabled?: boolean
   deferDailyAssignment?: boolean
   onDailyQuestTransition?: (previous: string | null, next: string | null) => unknown
 }
@@ -73,6 +83,10 @@ export interface GameProgressCoordinatorOptions {
 export interface ProgressDispatchResult {
   accepted: number
   state: ProgressStateV1
+  unlockedIds: string[]
+  xpGained: number
+  previousLevel: number
+  nextLevel: number
 }
 
 export interface ProgressDispatchOptions {
@@ -103,6 +117,10 @@ function isPositiveSafeInteger(value: number): boolean {
 
 function isValidCount(value: number): boolean {
   return Number.isFinite(value) && value >= 0
+}
+
+function reconcileAchievements(state: ProgressStateV1) {
+  return unlockAchievements(state, ACHIEVEMENT_CATALOG_PUBLISHED_AT)
 }
 
 /** Owns the single progress reduction, notification, analytics and checkpoint path. */
@@ -136,12 +154,19 @@ export class GameProgressCoordinator {
     this.knownWeaponIds = new Set(options.knownWeaponIds ?? KNOWN_WEAPON_IDS)
     this.knownMoveIds = new Set(options.knownMoveIds ?? KNOWN_MOVE_IDS)
     const loaded = this.store.load().state
+    const reconciled = options.gamificationEnabled === false
+      ? { state: loaded, unlockedIds: [] }
+      : reconcileAchievements(loaded)
     const hasSameDayAssignment = (
-      loaded.daily.dayKey === options.dayKey && loaded.daily.questId !== ''
+      reconciled.state.daily.dayKey === options.dayKey
+      && reconciled.state.daily.questId !== ''
     )
     this.state = options.deferDailyAssignment && !hasSameDayAssignment
-      ? loaded
-      : assignDailyQuest(loaded, options.dayKey, options.catalog)
+      ? reconciled.state
+      : assignDailyQuest(reconciled.state, options.dayKey, options.catalog)
+    if (reconciled.unlockedIds.length > 0) {
+      this.store.save(this.state, 'achievementBackfill')
+    }
   }
 
   get questCatalog(): QuestCatalogSnapshot {
@@ -209,25 +234,38 @@ export class GameProgressCoordinator {
     options: ProgressDispatchOptions = {}
   ): boolean {
     this.currentDayKey = dayKey
-    const next = assignDailyQuest(this.state, dayKey, this.assignmentCatalog)
-    if (next === this.state) return false
-    this.state = options.gamificationEnabled === false
-      ? next
-      : this.replayPendingDailyEvidence(next)
-    if (options.gamificationEnabled === false) this.clearPendingDailyEvidence()
-    this.catalog = this.assignmentCatalog
-    const transitions = options.gamificationEnabled === false
+    const gamificationEnabled = options.gamificationEnabled !== false
+    const reconciled = gamificationEnabled
+      ? reconcileAchievements(this.state)
+      : { state: this.state, unlockedIds: [] }
+    const assigned = assignDailyQuest(reconciled.state, dayKey, this.assignmentCatalog)
+    const dailyChanged = assigned !== reconciled.state
+    const unlockedIds = [...reconciled.unlockedIds]
+    if (!dailyChanged && unlockedIds.length === 0) return false
+
+    this.state = dailyChanged && gamificationEnabled
+      ? this.replayPendingDailyEvidence(assigned)
+      : assigned
+    if (dailyChanged && gamificationEnabled) {
+      const replayReconciled = reconcileAchievements(this.state)
+      this.state = replayReconciled.state
+      unlockedIds.push(...replayReconciled.unlockedIds)
+    }
+    if (dailyChanged && !gamificationEnabled) this.clearPendingDailyEvidence()
+    if (dailyChanged) this.catalog = this.assignmentCatalog
+    const transitions = !dailyChanged || !gamificationEnabled
       ? []
-      : dailyNoticeTransitions(next.daily, this.state.daily)
+      : dailyNoticeTransitions(assigned.daily, this.state.daily)
     if (
-      options.gamificationEnabled !== false
-      && next.daily.completedAt === null
+      dailyChanged
+      && gamificationEnabled
+      && assigned.daily.completedAt === null
       && this.state.daily.completedAt !== null
       && this.onDailyQuestTransition
     ) {
       try {
         const pending = this.onDailyQuestTransition(
-          next.daily.completedAt,
+          assigned.daily.completedAt,
           this.state.daily.completedAt
         )
         if (pending && typeof (pending as PromiseLike<unknown>).then === 'function') {
@@ -244,7 +282,8 @@ export class GameProgressCoordinator {
         // The assigned progress remains authoritative without feedback rendering.
       }
     }
-    this.store.save(this.state, 'dailyRollover')
+    if (unlockedIds.length > 0) this.store.save(this.state, 'achievementBackfill')
+    if (dailyChanged) this.store.save(this.state, 'dailyRollover')
     return true
   }
 
@@ -255,6 +294,8 @@ export class GameProgressCoordinator {
   ): ProgressDispatchResult {
     const gamificationEnabled = options.gamificationEnabled !== false
     let accepted = 0
+    const previousXp = totalAchievementXp(this.state)
+    const unlockedIds: string[] = []
     const notices: NotificationInput[] = []
 
     for (const event of events) {
@@ -291,21 +332,30 @@ export class GameProgressCoordinator {
       accepted += 1
       if (key !== null) this.remember(key)
 
-      for (const id of unlocked.unlockedIds) {
-        const achievement = ACHIEVEMENTS.find((item) => item.id === id)
-        if (!achievement) continue
-        notices.push({
-          key: `achievement:${id}`,
-          kind: 'achievement',
-          text: `새 도장: ${achievement.name}`,
-        })
-      }
+      unlockedIds.push(...unlocked.unlockedIds)
       if (gamificationEnabled) {
         for (const transition of dailyNoticeTransitions(previous.daily, next.daily)) {
           notices.push(this.dailyNotice(transition))
         }
       }
       this.track(event)
+    }
+
+    const nextXp = totalAchievementXp(this.state)
+    const xpGained = nextXp - previousXp
+    const previousLevel = levelProgress(previousXp).level
+    const nextLevel = levelProgress(nextXp).level
+    if (unlockedIds.length > 0) {
+      const unlockText = unlockedIds.length === 1
+        ? `업적 달성, 경험치 +${xpGained}`
+        : `업적 ${unlockedIds.length}개 달성, 경험치 +${xpGained}`
+      notices.push({
+        key: `achievements:${unlockedIds.join('+')}`,
+        kind: 'achievement',
+        text: nextLevel > previousLevel
+          ? `${unlockText}, 레벨 ${nextLevel}`
+          : unlockText,
+      })
     }
 
     notices
@@ -319,7 +369,14 @@ export class GameProgressCoordinator {
       })
 
     if (accepted > 0 && reason) this.store.save(this.state, reason)
-    return { accepted, state: this.state }
+    return {
+      accepted,
+      state: this.state,
+      unlockedIds,
+      xpGained,
+      previousLevel,
+      nextLevel,
+    }
   }
 
   selectTitle(title: string | null): boolean {
@@ -347,6 +404,30 @@ export class GameProgressCoordinator {
         ...this.state.profile,
         skins: { ...this.state.profile.skins, [characterId]: skinId },
       },
+    }
+    this.store.save(this.state, 'setting')
+    return true
+  }
+
+  selectFrame(id: ProfileFrameId): boolean {
+    const level = levelProgress(totalAchievementXp(this.state)).level
+    if (!availableFrameIds(level).includes(id)) return false
+    if (this.state.profile.frameId === id) return false
+    this.state = {
+      ...this.state,
+      profile: { ...this.state.profile, frameId: id },
+    }
+    this.store.save(this.state, 'setting')
+    return true
+  }
+
+  selectRecordBookTheme(id: RecordBookThemeId): boolean {
+    const level = levelProgress(totalAchievementXp(this.state)).level
+    if (!availableThemeIds(level).includes(id)) return false
+    if (this.state.profile.recordBookThemeId === id) return false
+    this.state = {
+      ...this.state,
+      profile: { ...this.state.profile, recordBookThemeId: id },
     }
     this.store.save(this.state, 'setting')
     return true

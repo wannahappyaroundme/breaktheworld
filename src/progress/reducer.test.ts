@@ -105,6 +105,8 @@ describe('progress defaults', () => {
       profile: {
         selectedTitle: null,
         skins: {},
+        frameId: 'default',
+        recordBookThemeId: 'default',
         strongInput: 'hold',
         reducedMotion: false,
         haptics: true,
