@@ -20,6 +20,7 @@ import {
   availableThemeIds,
   createQuestDefinition,
   dailyNoticeTransitions,
+  isAchievementTitle,
   levelProgress,
   resolveQuestCatalog,
   totalAchievementXp,
@@ -666,6 +667,35 @@ describe('permanent achievements', () => {
     ])).toEqual([
       '첫 와장창', '꾹 와장창 장인', '골고루 파괴', '세상 한 바퀴', '콤보 폭주',
     ])
+  })
+
+  it('authorizes only the eight rewards and five legacy compatibility titles', () => {
+    expect(ACHIEVEMENTS.filter(({ name }) => isAchievementTitle(name)).map(({ name }) => name))
+      .toEqual([
+        '첫 와장창',
+        '산산조각',
+        '최애의 한 방',
+        '꾹 와장창 장인',
+        '콤보 폭주',
+        '끊기지 않는 손',
+        '기술 박사',
+        '골고루 파괴',
+        '무기 도감 완성',
+        '모든 손의 마무리',
+        '세상 한 바퀴',
+        '세계 순환 전문가',
+        '모든 무기의 달인',
+      ])
+    expect(isAchievementTitle('첫 금')).toBe(false)
+    expect(isAchievementTitle('사용자가 만든 칭호')).toBe(false)
+
+    const state = createDefaultProgress('non-title-view')
+    state.achievements.first_hit = {
+      unlockedAt: ACHIEVEMENT_CATALOG_PUBLISHED_AT,
+      seen: true,
+    }
+    state.profile.selectedTitle = '첫 금'
+    expect(makeRecordBookView(state, BUILT_IN_CATALOG).profile.selectedTitle).toBeNull()
   })
 
   it('evaluates every structural condition and bounds displayed progress', () => {

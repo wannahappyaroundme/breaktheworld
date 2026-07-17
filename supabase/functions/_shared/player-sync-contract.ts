@@ -6,6 +6,7 @@ import {
   achievementReached,
   availableFrameIds,
   availableThemeIds,
+  isAchievementTitle,
   levelProgress,
   totalAchievementXp,
 } from './achievement-catalog.ts'
@@ -76,7 +77,9 @@ type ProfileFrameId = ReturnType<typeof availableFrameIds>[number]
 type RecordBookThemeId = ReturnType<typeof availableThemeIds>[number]
 
 const ACHIEVEMENT_IDS = new Set<string>(ACHIEVEMENT_CATALOG.map(({ id }) => id))
-const ACHIEVEMENT_TITLES = new Set<string>(ACHIEVEMENT_CATALOG.map(({ name }) => name))
+const ACHIEVEMENT_TITLES = new Set<string>(
+  ACHIEVEMENT_CATALOG.filter(({ name }) => isAchievementTitle(name)).map(({ name }) => name)
+)
 const FRAME_IDS = new Set<string>(availableFrameIds(20))
 const THEME_IDS = new Set<string>(availableThemeIds(20))
 
@@ -551,7 +554,11 @@ function normalizeDerivedSelections(state: SyncProgressState): void {
   }
   if (state.profile.selectedTitle !== null) {
     const definition = ACHIEVEMENT_CATALOG.find(({ name }) => name === state.profile.selectedTitle)
-    if (!definition || !state.achievements[definition.id]) state.profile.selectedTitle = null
+    if (
+      !definition
+      || !isAchievementTitle(definition.name)
+      || !state.achievements[definition.id]
+    ) state.profile.selectedTitle = null
   }
 }
 
@@ -617,7 +624,12 @@ function applyAccountDelta(
     if (selectedTitle === null) state.profile.selectedTitle = null
     else {
       const achievement = ACHIEVEMENT_CATALOG.find(({ name }) => name === selectedTitle)
-      if (achievement && selectedTitle !== undefined && state.achievements[achievement.id]) {
+      if (
+        achievement
+        && selectedTitle !== undefined
+        && isAchievementTitle(selectedTitle)
+        && state.achievements[achievement.id]
+      ) {
         state.profile.selectedTitle = selectedTitle
       }
     }

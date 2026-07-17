@@ -108,7 +108,7 @@ describe('share card', () => {
     expect(harness.texts).toContain('💥 지금까지 8개 부숨')
   })
 
-  it('rejects known-but-locked and known non-title achievement names', () => {
+  it('rejects locked and non-title rewards while preserving a legacy selected title', () => {
     renderCard({
       best: 9, total: 2, url: 'https://example.com/game',
       title: '산산조각', unlockedTitleIds: [],
@@ -122,7 +122,15 @@ describe('share card', () => {
       title: '첫 와장창', unlockedTitleIds: ['first_destroy'],
       frameId: 'default', recordBookThemeId: 'default', level: 20,
     })
-    expect(harness.texts).not.toContain('첫 와장창')
+    expect(harness.texts).toContain('첫 와장창')
+
+    harness.texts.length = 0
+    renderCard({
+      best: 9, total: 2, url: 'https://example.com/game',
+      title: '첫 금', unlockedTitleIds: ['first_hit'],
+      frameId: 'default', recordBookThemeId: 'default', level: 20,
+    })
+    expect(harness.texts).not.toContain('첫 금')
   })
 
   it('returns native success so gameplay can emit SHARE_COMPLETED truthfully', async () => {

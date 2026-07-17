@@ -4,6 +4,7 @@ import {
   achievementProgress,
   availableFrameIds,
   availableThemeIds,
+  isAchievementTitle,
   levelProgress,
   totalAchievementXp,
   type AchievementCategory,
@@ -209,6 +210,7 @@ export function makeRecordBookView(
     (achievement) => achievement.name === state.profile.selectedTitle
   )
   const selectedTitle = selectedAchievement
+    && isAchievementTitle(selectedAchievement.name)
     && state.achievements[selectedAchievement.id] !== undefined
     ? selectedAchievement.name
     : null

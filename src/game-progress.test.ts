@@ -441,6 +441,10 @@ describe('GameProgressCoordinator', () => {
 
   it('accepts only unlocked titles and catalog skin choices, then marks records seen', () => {
     const state = createDefaultProgress('seed')
+    state.achievements.first_hit = {
+      unlockedAt: '2026-07-17T02:00:00.000Z',
+      seen: false,
+    }
     state.achievements.first_destroy = {
       unlockedAt: '2026-07-17T03:00:00.000Z',
       seen: false,
@@ -448,6 +452,7 @@ describe('GameProgressCoordinator', () => {
     const { progress, store } = coordinator({ state })
 
     expect(progress.selectTitle('꾹 와장창 장인')).toBe(false)
+    expect(progress.selectTitle('첫 금')).toBe(false)
     expect(progress.selectTitle('첫 와장창')).toBe(true)
     expect(progress.selectSkin('cinnamoroll', 'classic')).toBe(true)
     expect(progress.selectSkin('ditto', 'corrupt')).toBe(false)
@@ -1066,7 +1071,7 @@ describe('Game progression UI integration', () => {
     state.achievements[unlocked[1]].seen = false
     let stateReads = 0
     const hud = { setBest: vi.fn(), setProgress: vi.fn(), setGamificationVisible: vi.fn() }
-    const recordBook = { render: vi.fn(), setGamificationVisible: vi.fn() }
+    const recordBook = { isOpen: true, render: vi.fn(), setGamificationVisible: vi.fn() }
     const game = Object.create(Game.prototype) as any
     game.progress = {
       get state() { stateReads += 1; return state },
@@ -1097,6 +1102,50 @@ describe('Game progression UI integration', () => {
     })
     expect(recordBook.setGamificationVisible).toHaveBeenCalledWith(true)
     expect(hud.setGamificationVisible).toHaveBeenCalledWith(true)
+  })
+
+  it('keeps a closed record book off the attack render path and refreshes it when opened', () => {
+    const state = stateAtXp(300)
+    const hud = { setBest: vi.fn(), setProgress: vi.fn(), setGamificationVisible: vi.fn() }
+    const recordBook = {
+      isOpen: false,
+      render: vi.fn(),
+      setGamificationVisible: vi.fn(),
+      open: vi.fn(() => { recordBook.isOpen = true }),
+    }
+    const game = Object.create(Game.prototype) as any
+    game.progress = { state, questCatalog: targetsCatalog }
+    game.hud = hud
+    game.recordBook = recordBook
+    game.remoteConfig = { active: { gamification_enabled: true, player_profiles_ui: false } }
+    game.questCatalogResolved = true
+    game.playerAccount = { kind: 'guest', signupEnabled: false, card: { visible: false, kind: 'hidden' } }
+    game.profileCard = () => ({ visible: false, kind: 'hidden' })
+    game.analytics = { trackAchievementHubOpen: vi.fn() }
+
+    game.refreshProgressUI()
+    expect(recordBook.render).not.toHaveBeenCalled()
+
+    game.openRecordBook()
+    expect(recordBook.open).toHaveBeenCalledOnce()
+    expect(recordBook.render).toHaveBeenCalledOnce()
+  })
+
+  it('marks achievements seen only while the progression surface is actually visible', () => {
+    const game = Object.create(Game.prototype) as any
+    game.progress = { markAchievementsSeen: vi.fn(() => true) }
+    game.refreshProgressUI = vi.fn()
+    game.questCatalogResolved = true
+    game.remoteConfig = { active: { gamification_enabled: false } }
+
+    game.handleRecordBookClose()
+    expect(game.progress.markAchievementsSeen).not.toHaveBeenCalled()
+    expect(game.refreshProgressUI).not.toHaveBeenCalled()
+
+    game.remoteConfig.active.gamification_enabled = true
+    game.handleRecordBookClose()
+    expect(game.progress.markAchievementsSeen).toHaveBeenCalledOnce()
+    expect(game.refreshProgressUI).toHaveBeenCalledOnce()
   })
 
   it('uses the exact accepted transition for HUD gain and telemetry without letting either fail gameplay', () => {

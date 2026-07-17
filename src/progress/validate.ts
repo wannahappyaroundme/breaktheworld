@@ -5,6 +5,7 @@ import {
   BUILT_IN_CATALOG,
   createQuestDefinition,
   findBuiltInQuest,
+  isAchievementTitle,
   isSafeQuestId,
   isSafeQuestCopy,
   availableFrameIds,
@@ -20,7 +21,9 @@ import type {
   RecordBookThemeId,
 } from './types'
 
-const TITLES: ReadonlySet<string> = new Set(ACHIEVEMENTS.map((achievement) => achievement.name))
+const TITLES: ReadonlySet<string> = new Set(
+  ACHIEVEMENTS.filter(({ name }) => isAchievementTitle(name)).map(({ name }) => name)
+)
 const ISO_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-](\d{2}):(\d{2}))$/
 
 type UnknownRecord = Record<string, unknown>

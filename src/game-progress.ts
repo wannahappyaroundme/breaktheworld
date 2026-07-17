@@ -7,6 +7,7 @@ import {
   availableThemeIds,
   createQuestDefinition,
   dailyNoticeTransitions,
+  isAchievementTitle,
   levelProgress,
   questFromSnapshot,
   totalAchievementXp,
@@ -382,7 +383,11 @@ export class GameProgressCoordinator {
   selectTitle(title: string | null): boolean {
     if (title !== null) {
       const achievement = ACHIEVEMENTS.find((item) => item.name === title)
-      if (!achievement || !this.state.achievements[achievement.id]) return false
+      if (
+        !achievement
+        || !isAchievementTitle(title)
+        || !this.state.achievements[achievement.id]
+      ) return false
     }
     if (this.state.profile.selectedTitle === title) return false
     this.state = {

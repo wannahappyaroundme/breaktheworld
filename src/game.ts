@@ -230,9 +230,7 @@ export class Game {
         onThemeChange: (themeId) => this.selectTheme(themeId),
         onSettingChange: (change) => this.changeSetting(change),
         onOpenProfile: (trigger) => this.options.onOpenProfile?.(trigger),
-        onClose: () => {
-          if (this.progress.markAchievementsSeen()) this.refreshProgressUI()
-        },
+        onClose: () => this.handleRecordBookClose(),
       },
       this.profileCard(),
     )
@@ -523,11 +521,13 @@ export class Game {
       ratio: view.summary.levelRatio,
       unseen: view.achievements.items.filter(({ complete, seen }) => complete && !seen).length,
     })
-    this.recordBook.render(
-      view,
-      this.settingsState(state),
-      this.profileCard(),
-    )
+    if (this.recordBook.isOpen) {
+      this.recordBook.render(
+        view,
+        this.settingsState(state),
+        this.profileCard(),
+      )
+    }
     this.applyGamificationVisibility()
   }
 
@@ -897,12 +897,19 @@ export class Game {
     this.manager.skip(this.renderer.width, this.renderer.height)
   }
 
-  private onOpenRecordBook = (): void => {
-    this.refreshProgressUI()
+  private openRecordBook(): void {
     this.recordBook.open()
+    this.refreshProgressUI()
     if (this.remoteConfig.active.gamification_enabled) {
       try { this.analytics.trackAchievementHubOpen('hud') } catch { /* optional */ }
     }
+  }
+
+  private onOpenRecordBook = (): void => this.openRecordBook()
+
+  private handleRecordBookClose(): void {
+    if (!this.progressionUiVisible()) return
+    if (this.progress.markAchievementsSeen()) this.refreshProgressUI()
   }
 
   private onShare = (): void => {

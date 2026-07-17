@@ -149,8 +149,8 @@ select is(
 );
 select is(
   (select (state->>'catalogVersion')::integer from public.player_progress where user_id = '61000000-0000-4000-8000-000000000001'),
-  2,
-  'new profile starts on achievement catalog version two'
+  1,
+  'new profile keeps the quest catalog version meaning'
 );
 select is(
   (select state #>> '{profile,frameId}' from public.player_progress where user_id = '61000000-0000-4000-8000-000000000001'),

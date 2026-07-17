@@ -680,7 +680,6 @@ describe('RecordBook', () => {
       guestProfile,
     )
     recordBook.open()
-    const homeTab = byAttribute(parent, 'data-hub-tab', 'home')
     const achievementsTab = byAttribute(parent, 'data-hub-tab', 'achievements')
     const cosmeticsTab = byAttribute(parent, 'data-hub-tab', 'cosmetics')
     const settingsTab = byAttribute(parent, 'data-hub-tab', 'settings')
@@ -694,10 +693,10 @@ describe('RecordBook', () => {
     const gamificationSections = parent.querySelectorAll('[data-gamification]')
     expect(gamificationSections.every((section) => section.hidden)).toBe(true)
     expect(achievementsTab.disabled).toBe(true)
-    expect(cosmeticsTab.disabled).toBe(true)
+    expect(cosmeticsTab.disabled).toBe(false)
     expect(settingsTab.disabled).toBe(false)
-    expect(homeTab.getAttribute('aria-selected')).toBe('true')
-    expect(fakeDocument.activeElement).toBe(homeTab)
+    expect(cosmeticsTab.getAttribute('aria-selected')).toBe('true')
+    expect(fakeDocument.activeElement).toBe(cosmeticsTab)
     expect(parent.querySelector('.recordbook-heading-meta')?.textContent).toBe('게스트')
     expect(byAttribute(parent, 'data-recordbook-profile', 'guest').textContent)
       .toContain('게스트로 즐기는 중')
@@ -705,25 +704,30 @@ describe('RecordBook', () => {
       .toBe('default')
 
     achievementsTab.click()
-    cosmeticsTab.click()
     byAttribute(parent, 'data-achievement-status-filter', 'active').click()
     byAttribute(parent, 'data-title', '기술 박사').click()
     byAttribute(parent, 'data-frame', 'electric_night').click()
     byAttribute(parent, 'data-theme', 'electric_night').click()
-    byAttribute(parent, 'data-skin', 'cinnamoroll:classic').click()
+    const classicSkin = byAttribute(parent, 'data-skin', 'cinnamoroll:classic')
+    let skinAncestor = classicSkin.parentElement
+    while (skinAncestor && skinAncestor.getAttribute('data-gamification') === null) {
+      skinAncestor = skinAncestor.parentElement
+    }
+    expect(skinAncestor).toBeNull()
+    classicSkin.click()
     expect(onTabChange).not.toHaveBeenCalled()
     expect(onTitleChange).not.toHaveBeenCalled()
     expect(onFrameChange).not.toHaveBeenCalled()
     expect(onThemeChange).not.toHaveBeenCalled()
-    expect(onSkinChange).not.toHaveBeenCalled()
+    expect(onSkinChange).toHaveBeenCalledWith('cinnamoroll', 'classic')
     expect(onFilterChange).not.toHaveBeenCalled()
 
     recordBook.setGamificationVisible(true)
 
     expect(achievementsTab.disabled).toBe(false)
     expect(cosmeticsTab.disabled).toBe(false)
-    expect(homeTab.getAttribute('aria-selected')).toBe('true')
-    expect(fakeDocument.activeElement).toBe(homeTab)
+    expect(cosmeticsTab.getAttribute('aria-selected')).toBe('true')
+    expect(fakeDocument.activeElement).toBe(cosmeticsTab)
     expect(parent.querySelector('.recordbook-sheet')?.getAttribute('data-recordbook-theme'))
       .toBe('electric_night')
     expect(byAttribute(parent, 'data-frame', 'electric_night').getAttribute('aria-pressed'))

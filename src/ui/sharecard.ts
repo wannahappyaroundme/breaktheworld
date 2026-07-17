@@ -3,6 +3,7 @@ import {
   ACHIEVEMENT_CATALOG,
   availableFrameIds,
   availableThemeIds,
+  isAchievementTitle,
 } from '../../supabase/functions/_shared/achievement-catalog'
 
 export interface ShareStats {
@@ -64,8 +65,8 @@ export function renderCard(s: ShareStats): HTMLCanvasElement {
       : []
   )
   const titleReward = ACHIEVEMENT_CATALOG.find((achievement) => (
-    achievement.titleReward
-    && achievement.name === s.title
+    achievement.name === s.title
+    && isAchievementTitle(achievement.name)
   ))
   const title = titleReward && unlockedTitleIds.has(titleReward.id)
     ? titleReward.name

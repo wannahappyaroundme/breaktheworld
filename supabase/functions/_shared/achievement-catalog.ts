@@ -460,6 +460,23 @@ export const ACHIEVEMENT_CATALOG = Object.freeze([
 
 export type AchievementId = (typeof ACHIEVEMENT_CATALOG)[number]['id']
 
+export const LEGACY_TITLE_ACHIEVEMENT_IDS = Object.freeze([
+  'first_destroy',
+  'charge_master',
+  'variety_10',
+  'world_cycle',
+  'combo_50',
+] as const)
+
+const LEGACY_TITLE_IDS = new Set<string>(LEGACY_TITLE_ACHIEVEMENT_IDS)
+
+/** Allows the eight current title rewards plus five persisted legacy titles. */
+export function isAchievementTitle(name: string): boolean {
+  const achievement = ACHIEVEMENT_CATALOG.find((item) => item.name === name)
+  return achievement !== undefined
+    && (achievement.titleReward || LEGACY_TITLE_IDS.has(achievement.id))
+}
+
 export function achievementProgress(
   definition: AchievementDefinition,
   state: AchievementProgressSource

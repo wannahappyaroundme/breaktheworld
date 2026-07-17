@@ -42,7 +42,7 @@ const HUB_TABS: ReadonlyArray<{ id: HubTab; label: string }> = [
 ]
 
 function isGamificationTab(tab: HubTab): boolean {
-  return tab === 'achievements' || tab === 'cosmetics'
+  return tab === 'achievements'
 }
 
 let recordBookId = 0
@@ -682,7 +682,6 @@ export class RecordBook {
       `recordbook-tab-${this.instanceId}-cosmetics`,
       'cosmetics'
     )
-    cosmetics.setAttribute('data-gamification', '')
     const intro = this.doc.createElement('header')
     intro.className = 'recordbook-panel-intro'
     intro.append(
@@ -711,6 +710,7 @@ export class RecordBook {
 
   private renderTitles(view: RecordBookView): HTMLElement {
     const section = this.cosmeticSection('대표 칭호', '프로필과 기록 카드에 보여줄 이름이에요')
+    section.setAttribute('data-gamification', '')
     const choices = this.doc.createElement('div')
     choices.className = 'recordbook-cosmetic-grid'
     for (const choice of view.cosmetics.titles) {
@@ -747,6 +747,7 @@ export class RecordBook {
 
   private renderFrames(view: RecordBookView): HTMLElement {
     const section = this.cosmeticSection('프로필·기록 카드 테두리', '기본 테두리와 레벨 보상 4개가 있어요')
+    section.setAttribute('data-gamification', '')
     const choices = this.doc.createElement('div')
     choices.className = 'recordbook-cosmetic-grid'
     for (const choice of view.cosmetics.frames) {
@@ -765,6 +766,7 @@ export class RecordBook {
 
   private renderThemes(view: RecordBookView): HTMLElement {
     const section = this.cosmeticSection('기록책 색', '기본 색과 레벨 보상 3개가 있어요')
+    section.setAttribute('data-gamification', '')
     const choices = this.doc.createElement('div')
     choices.className = 'recordbook-cosmetic-grid'
     for (const choice of view.cosmetics.themes) {
@@ -817,7 +819,7 @@ export class RecordBook {
         button.setAttribute('aria-pressed', String(choice.selected))
         button.setAttribute('data-skin', `${item.id}:${choice.id}`)
         button.addEventListener('click', () => {
-          if (this.gamificationVisible) this.callbacks.onSkinChange(item.id, choice.id)
+          this.callbacks.onSkinChange(item.id, choice.id)
         })
         choices.appendChild(button)
       }

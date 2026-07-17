@@ -162,6 +162,20 @@ describe('parseProgress', () => {
     })
   })
 
+  it('drops a persisted achievement name that is not an approved or legacy title', () => {
+    const raw = createDefaultProgress('non-title-profile')
+    raw.achievements.first_hit = {
+      unlockedAt: '2026-07-17T00:00:00.000Z',
+      seen: true,
+    }
+    raw.profile.selectedTitle = '첫 금'
+
+    const parsed = parseProgress(raw, KNOWN_WEAPONS, KNOWN_MOVES)
+
+    expect(parsed.achievements.first_hit).toBeDefined()
+    expect(parsed.profile.selectedTitle).toBeNull()
+  })
+
   it('recovers valid fields independently and drops invalid counters and unknown IDs', () => {
     const parsed = parseProgress({
       schemaVersion: 99,

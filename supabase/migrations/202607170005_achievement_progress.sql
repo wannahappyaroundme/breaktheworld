@@ -218,7 +218,7 @@ set search_path = public, pg_temp
 as $$
   select jsonb_build_object(
     'schemaVersion', 1,
-    'catalogVersion', 2,
+    'catalogVersion', 1,
     'installSeed', p_account_seed::text,
     'lifetime', jsonb_build_object(
       'validHits', 0,

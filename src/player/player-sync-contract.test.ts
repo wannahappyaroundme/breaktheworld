@@ -246,6 +246,12 @@ describe('player sync contract', () => {
     expect(() => parseSyncBatch([operation({
       settings: { frameId: 'unknown_frame' } as never,
     })])).toThrow('invalid_sync_batch')
+    expect(() => parseSyncBatch([operation({
+      settings: { selectedTitle: '첫 금' },
+    })])).toThrow('invalid_sync_batch')
+    expect(parseSyncBatch([operation({
+      settings: { selectedTitle: '첫 와장창' },
+    })])[0].delta.settings.selectedTitle).toBe('첫 와장창')
   })
 
   it('uses only the explicit server assignment for daily evidence and completes once', () => {

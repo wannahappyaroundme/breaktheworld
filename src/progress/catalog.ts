@@ -16,6 +16,7 @@ export {
   achievementReached,
   availableFrameIds,
   availableThemeIds,
+  isAchievementTitle,
   levelProgress,
   totalAchievementXp,
 } from '../../supabase/functions/_shared/achievement-catalog'
