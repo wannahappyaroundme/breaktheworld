@@ -1,6 +1,31 @@
 import type { GameEvent } from './events'
 import { isCharacterWeaponId } from './events'
 import type { DailyQuestSnapshot, ProgressStateV1 } from './types'
+import {
+  ACHIEVEMENT_CATALOG,
+  achievementReached,
+} from '../../supabase/functions/_shared/achievement-catalog'
+
+export {
+  ACHIEVEMENT_CATALOG,
+  ACHIEVEMENT_CATALOG_VERSION,
+  LEVEL_THRESHOLDS,
+  TIER_XP,
+  achievementProgress,
+  achievementReached,
+  availableFrameIds,
+  availableThemeIds,
+  levelProgress,
+  totalAchievementXp,
+} from '../../supabase/functions/_shared/achievement-catalog'
+
+export type {
+  AchievementCategory,
+  AchievementCondition,
+  AchievementDefinition,
+  AchievementProgressSource,
+  AchievementTier,
+} from '../../supabase/functions/_shared/achievement-catalog'
 
 export type BuiltInQuestId = 'charged_finisher_2' | 'characters_3' | 'targets_3'
 export type QuestEventType = 'CHARGE_RELEASED' | 'WEAPON_USED' | 'TARGET_DESTROYED'
@@ -262,84 +287,21 @@ export function dailyNoticeTransitions(
   return []
 }
 
-export type AchievementId =
-  | 'first_destroy'
-  | 'charge_master'
-  | 'variety_10'
-  | 'world_cycle'
-  | 'combo_50'
+export type AchievementId = (typeof ACHIEVEMENT_CATALOG)[number]['id']
 
-export type AchievementCondition =
-  | 'totalTargets'
-  | 'chargedFinishers'
-  | 'distinctWeapons'
-  | 'worldTargets'
-  | 'bestCombo'
-
-export interface AchievementDefinition {
-  readonly id: AchievementId
-  readonly name: string
-  readonly target: number
-  readonly condition: AchievementCondition
-  readonly next: string
+const LEGACY_NEXT_COPY: Partial<Record<AchievementId, string>> = {
+  first_destroy: '타겟 1개 부수기',
+  charge_master: '꾹 와장창 10번 하기',
+  variety_10: '서로 다른 무기 10종 사용하기',
+  world_cycle: '세상, 지구, 도시를 각각 부수기',
+  combo_50: '최고 연속 50 만들기',
 }
 
-export const ACHIEVEMENTS = [
-  {
-    id: 'first_destroy',
-    name: '첫 와장창',
-    target: 1,
-    condition: 'totalTargets',
-    next: '타겟 1개 부수기',
-  },
-  {
-    id: 'charge_master',
-    name: '꾹 와장창 장인',
-    target: 10,
-    condition: 'chargedFinishers',
-    next: '꾹 와장창 10번 하기',
-  },
-  {
-    id: 'variety_10',
-    name: '골고루 파괴',
-    target: 10,
-    condition: 'distinctWeapons',
-    next: '서로 다른 무기 10종 사용하기',
-  },
-  {
-    id: 'world_cycle',
-    name: '세상 한 바퀴',
-    target: 3,
-    condition: 'worldTargets',
-    next: '세상, 지구, 도시를 각각 부수기',
-  },
-  {
-    id: 'combo_50',
-    name: '콤보 폭주',
-    target: 50,
-    condition: 'bestCombo',
-    next: '최고 연속 50 만들기',
-  },
-] as const satisfies readonly AchievementDefinition[]
-
-export function achievementProgress(
-  definition: AchievementDefinition,
-  state: ProgressStateV1
-): number {
-  switch (definition.condition) {
-    case 'totalTargets':
-      return Math.min(state.lifetime.totalTargets, definition.target)
-    case 'chargedFinishers':
-      return Math.min(state.lifetime.chargedFinishers, definition.target)
-    case 'distinctWeapons':
-      return Math.min(new Set(state.lifetime.distinctWeaponIds).size, definition.target)
-    case 'worldTargets':
-      return (['word', 'earth', 'city'] as const)
-        .filter((targetId) => state.byTarget[targetId].destroys > 0).length
-    case 'bestCombo':
-      return Math.min(state.lifetime.bestCombo, definition.target)
-  }
-}
+/** Compatibility alias for the current record-book view until it adopts description directly. */
+export const ACHIEVEMENTS = Object.freeze(ACHIEVEMENT_CATALOG.map((definition) => Object.freeze({
+  ...definition,
+  next: LEGACY_NEXT_COPY[definition.id] ?? definition.description,
+})))
 
 export interface AchievementUnlockResult {
   state: ProgressStateV1
@@ -354,7 +316,7 @@ export function unlockAchievements(
   const unlockedIds = ACHIEVEMENTS
     .filter((achievement) => (
       state.achievements[achievement.id] === undefined
-      && achievementProgress(achievement, state) >= achievement.target
+      && achievementReached(achievement, state)
     ))
     .map((achievement) => achievement.id)
   if (unlockedIds.length === 0) return { state, unlockedIds }

@@ -6,14 +6,20 @@ import { isCharacterWeaponId, type GameEvent } from './events'
 import { kstDayKey } from './day'
 import { reduceProgress } from './reducer'
 import {
+  ACHIEVEMENT_CATALOG_VERSION,
   ACHIEVEMENTS,
   BUILT_IN_CATALOG,
   BUILT_IN_QUESTS,
   achievementProgress,
+  achievementReached,
   assignDailyQuest,
+  availableFrameIds,
+  availableThemeIds,
   createQuestDefinition,
   dailyNoticeTransitions,
+  levelProgress,
   resolveQuestCatalog,
+  totalAchievementXp,
   unlockAchievements,
   type QuestCatalogSnapshot,
 } from './catalog'
@@ -455,40 +461,134 @@ describe('daily assignment and notices', () => {
 })
 
 describe('permanent achievements', () => {
-  it('contains exactly five approved names, targets, and conditions', () => {
-    expect(ACHIEVEMENTS.map(({ id, name, target, condition }) => ({
-      id,
-      name,
-      target,
-      condition,
-    }))).toEqual([
-      { id: 'first_destroy', name: '첫 와장창', target: 1, condition: 'totalTargets' },
-      { id: 'charge_master', name: '꾹 와장창 장인', target: 10, condition: 'chargedFinishers' },
-      { id: 'variety_10', name: '골고루 파괴', target: 10, condition: 'distinctWeapons' },
-      { id: 'world_cycle', name: '세상 한 바퀴', target: 3, condition: 'worldTargets' },
-      { id: 'combo_50', name: '콤보 폭주', target: 50, condition: 'bestCombo' },
+  const countByTier = () => ACHIEVEMENTS.reduce<Record<string, number>>((counts, item) => {
+    counts[item.tier] = (counts[item.tier] ?? 0) + 1
+    return counts
+  }, {})
+
+  const pickAchievementNames = (ids: readonly string[]) => ids.map((id) => (
+    ACHIEVEMENTS.find((item) => item.id === id)?.name
+  ))
+
+  it('defines the approved immutable achievement and XP contract', () => {
+    expect(ACHIEVEMENT_CATALOG_VERSION).toBe(2)
+    expect(ACHIEVEMENTS).toHaveLength(32)
+    expect(new Set(ACHIEVEMENTS.map(({ id }) => id)).size).toBe(32)
+    expect(countByTier()).toEqual({
+      easy: 10,
+      normal: 10,
+      hard: 8,
+      master: 4,
+    })
+    expect(ACHIEVEMENTS.reduce((sum, item) => sum + item.xp, 0)).toBe(4_700)
+    expect(ACHIEVEMENTS.filter(({ titleReward }) => titleReward).map(({ name }) => name)).toEqual([
+      '산산조각',
+      '최애의 한 방',
+      '끊기지 않는 손',
+      '기술 박사',
+      '무기 도감 완성',
+      '모든 손의 마무리',
+      '세계 순환 전문가',
+      '모든 무기의 달인',
+    ])
+    expect(Object.isFrozen(ACHIEVEMENTS)).toBe(true)
+    for (const item of ACHIEVEMENTS) {
+      expect(Object.isFrozen(item)).toBe(true)
+      expect(Object.isFrozen(item.condition)).toBe(true)
+    }
+  })
+
+  it('keeps every legacy achievement identity and title', () => {
+    expect(pickAchievementNames([
+      'first_destroy', 'charge_master', 'variety_10', 'world_cycle', 'combo_50',
+    ])).toEqual([
+      '첫 와장창', '꾹 와장창 장인', '골고루 파괴', '세상 한 바퀴', '콤보 폭주',
     ])
   })
 
-  it('unlocks every satisfied achievement without adding daily stamps', () => {
+  it('evaluates every structural condition and bounds displayed progress', () => {
     const state = createDefaultProgress('seed')
-    state.lifetime.totalTargets = 1
-    state.lifetime.chargedFinishers = 10
-    state.lifetime.distinctWeaponIds = Array.from({ length: 10 }, (_, index) => `weapon-${index}`)
-    state.lifetime.bestCombo = 50
-    state.lifetime.stamps = 4
-    state.byTarget.word.destroys = 1
-    state.byTarget.earth.destroys = 1
-    state.byTarget.city.destroys = 1
+    state.lifetime.validHits = 2_000
+    state.lifetime.totalTargets = 200
+    state.lifetime.chargedFinishers = 60
+    state.lifetime.bestCombo = 120
+    state.lifetime.stamps = 8
+    state.lifetime.distinctWeaponIds = [
+      'hammer', 'fist', 'glass', 'laser', 'meteor', 'missile', 'bomb',
+      'lightning', 'flame', 'tornado', 'freeze', 'blackhole', 'cinnamoroll',
+      'thanos', 'ironman', 'hulk', 'godzilla', 'dragonball', 'cat', 'ditto', 'pooh',
+      'hammer',
+    ]
+    for (const id of state.lifetime.distinctWeaponIds) {
+      state.byWeapon[id] = { uses: 25, finishes: 1, seenMoves: ['quick', 'drag'] }
+    }
+    state.byWeapon.hammer = { ...state.byWeapon.hammer, uses: 55, finishes: 55 }
+    state.byTarget.word.destroys = 60
+    state.byTarget.earth.destroys = 55
+    state.byTarget.city.destroys = 50
 
-    expect(ACHIEVEMENTS.map((achievement) => achievementProgress(achievement, state))).toEqual([
-      1, 10, 10, 3, 50,
-    ])
+    for (const achievement of ACHIEVEMENTS) {
+      expect(achievementProgress(achievement, state)).toBe(achievement.target)
+      expect(achievementReached(achievement, state)).toBe(true)
+    }
+
     const result = unlockAchievements(state, '2026-07-16T01:02:03.000Z')
     expect(result.unlockedIds).toEqual(ACHIEVEMENTS.map((achievement) => achievement.id))
     expect(Object.keys(result.state.achievements)).toEqual(result.unlockedIds)
-    expect(result.state.lifetime.stamps).toBe(4)
+    expect(result.state.lifetime.stamps).toBe(8)
     expect(state.achievements).toEqual({})
+  })
+
+  it('derives XP and level only from recognized unlocked achievement IDs', () => {
+    const state = createDefaultProgress('seed')
+    state.achievements = {
+      first_hit: { unlockedAt: '2026-07-16T00:00:00.000Z', seen: true },
+      hits_1000: { unlockedAt: '2026-07-16T00:00:01.000Z', seen: false },
+      unknown: { unlockedAt: '2026-07-16T00:00:02.000Z', seen: false },
+    }
+    state.lifetime.stamps = 999
+
+    expect(totalAchievementXp(state)).toBe(250)
+    expect(levelProgress(totalAchievementXp(state))).toEqual({
+      level: 4,
+      xp: 250,
+      current: 200,
+      next: 300,
+      progress: 0.5,
+    })
+    expect(levelProgress(-1)).toEqual({ level: 1, xp: 0, current: 0, next: 50, progress: 0 })
+    expect(levelProgress(Number.NaN)).toEqual({ level: 1, xp: 0, current: 0, next: 50, progress: 0 })
+    expect(levelProgress(4_700)).toEqual({
+      level: 20,
+      xp: 4_700,
+      current: 4_700,
+      next: 4_700,
+      progress: 1,
+    })
+    expect(levelProgress(9_999)).toEqual(levelProgress(4_700))
+  })
+
+  it('exposes only cosmetics earned at the supplied bounded level', () => {
+    expect(availableFrameIds(1)).toEqual(['default'])
+    expect(availableFrameIds(5)).toEqual(['default', 'first_crack'])
+    expect(availableFrameIds(10)).toEqual(['default', 'first_crack', 'electric_night'])
+    expect(availableFrameIds(15)).toEqual([
+      'default', 'first_crack', 'electric_night', 'coral_burst',
+    ])
+    expect(availableFrameIds(20)).toEqual([
+      'default', 'first_crack', 'electric_night', 'coral_burst', 'legend_crown',
+    ])
+    expect(availableFrameIds(99)).toEqual(availableFrameIds(20))
+    expect(availableFrameIds(Number.NaN)).toEqual(['default'])
+
+    expect(availableThemeIds(1)).toEqual(['default'])
+    expect(availableThemeIds(10)).toEqual(['default', 'electric_night'])
+    expect(availableThemeIds(15)).toEqual(['default', 'electric_night', 'coral_burst'])
+    expect(availableThemeIds(20)).toEqual([
+      'default', 'electric_night', 'coral_burst', 'legend_crown',
+    ])
+    expect(availableThemeIds(99)).toEqual(availableThemeIds(20))
+    expect(availableThemeIds(Number.NaN)).toEqual(['default'])
   })
 })
 
@@ -526,13 +626,13 @@ describe('record-book view model', () => {
     expect(view.achievements.items.map((item) => item.id)).toEqual(
       ACHIEVEMENTS.map((achievement) => achievement.id)
     )
-    expect(view.achievements.items[0]).toMatchObject({
+    expect(view.achievements.items.find(({ id }) => id === 'first_destroy')).toMatchObject({
       name: '첫 와장창',
       complete: true,
       seen: false,
       selectableTitle: '첫 와장창',
     })
-    expect(view.achievements.items[1].selectableTitle).toBeNull()
+    expect(view.achievements.items.find(({ id }) => id === 'first_hit')?.selectableTitle).toBeNull()
     expect(view.skins).toEqual({
       heading: '캐릭터 모습',
       items: [

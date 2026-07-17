@@ -1,3 +1,15 @@
+export const CHARACTER_WEAPON_IDS = Object.freeze([
+  'cinnamoroll',
+  'thanos',
+  'ironman',
+  'hulk',
+  'godzilla',
+  'dragonball',
+  'cat',
+  'ditto',
+  'pooh',
+] as const)
+
 export const APPROVED_ANALYTICS_WEAPON_IDS = Object.freeze([
   'hammer',
   'fist',
@@ -11,15 +23,7 @@ export const APPROVED_ANALYTICS_WEAPON_IDS = Object.freeze([
   'tornado',
   'freeze',
   'blackhole',
-  'cinnamoroll',
-  'thanos',
-  'ironman',
-  'hulk',
-  'godzilla',
-  'dragonball',
-  'cat',
-  'ditto',
-  'pooh',
+  ...CHARACTER_WEAPON_IDS,
 ] as const)
 
 const APPROVED_SET: ReadonlySet<string> = new Set(APPROVED_ANALYTICS_WEAPON_IDS)

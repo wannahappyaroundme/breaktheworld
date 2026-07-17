@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { ACHIEVEMENTS } from '../progress/catalog'
 import { createDefaultProgress } from '../progress/defaults'
 import type { ProgressStateV1 } from '../progress/types'
+import { ACHIEVEMENT_CATALOG } from '../../supabase/functions/_shared/achievement-catalog'
 import {
-  PLAYER_SYNC_ACHIEVEMENTS,
   applyPendingPlayerOperation,
   applyPlayerOperation,
   diffPlayerProgress,
@@ -221,13 +221,8 @@ describe('player sync contract', () => {
     expect(next.daily.stampAwarded).toBe(false)
   })
 
-  it('keeps the server and client achievement catalogs in lockstep', () => {
-    expect(PLAYER_SYNC_ACHIEVEMENTS).toEqual(ACHIEVEMENTS.map(({ id, name, target, condition }) => ({
-      id,
-      title: name,
-      target,
-      condition,
-    })))
+  it('uses one dependency-free achievement catalog across server and client modules', () => {
+    expect(ACHIEVEMENTS.map(({ next, ...definition }) => definition)).toEqual(ACHIEVEMENT_CATALOG)
   })
 
   it('is deterministic across 200 bounded accepted operation lists and batch groupings', () => {
