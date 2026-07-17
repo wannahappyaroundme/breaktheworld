@@ -462,6 +462,7 @@ body {
 
   .weapon:active,
   .icon-btn:active,
+  .hud-menu-item:active,
   .whatsnew .ok-btn:active {
     transform: none !important;
   }
@@ -478,6 +479,7 @@ html.reduce-motion *::after {
 
 html.reduce-motion .weapon:active,
 html.reduce-motion .icon-btn:active,
+html.reduce-motion .hud-menu-item:active,
 html.reduce-motion .whatsnew .ok-btn:active {
   transform: none !important;
 }

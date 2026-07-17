@@ -6,14 +6,16 @@ type Listener = (event: FakeEvent) => void
 
 class FakeEvent {
   readonly key?: string
+  readonly shiftKey: boolean
   readonly target: FakeElement | FakeDocument
   defaultPrevented = false
   propagationStopped = false
 
-  constructor(type: string, target: FakeElement | FakeDocument, key?: string) {
+  constructor(type: string, target: FakeElement | FakeDocument, key?: string, shiftKey = false) {
     this.type = type
     this.target = target
     this.key = key
+    this.shiftKey = shiftKey
   }
 
   readonly type: string
@@ -148,8 +150,14 @@ class FakeElement {
     this.listeners.set(type, listeners)
   }
 
-  dispatch(type: string, key?: string): FakeEvent {
-    const event = new FakeEvent(type, this, key)
+  removeEventListener(type: string, listener: EventListener): void {
+    const listeners = this.listeners.get(type) ?? []
+    const removed = listener as unknown as Listener
+    this.listeners.set(type, listeners.filter((candidate) => candidate !== removed))
+  }
+
+  dispatch(type: string, key?: string, shiftKey = false): FakeEvent {
+    const event = new FakeEvent(type, this, key, shiftKey)
     for (const listener of this.listeners.get(type) ?? []) listener(event)
     return event
   }
@@ -196,6 +204,12 @@ class FakeDocument {
     const listeners = this.listeners.get(type) ?? []
     listeners.push(listener as unknown as Listener)
     this.listeners.set(type, listeners)
+  }
+
+  removeEventListener(type: string, listener: EventListener): void {
+    const listeners = this.listeners.get(type) ?? []
+    const removed = listener as unknown as Listener
+    this.listeners.set(type, listeners.filter((candidate) => candidate !== removed))
   }
 
   dispatch(type: string, target: FakeElement | FakeDocument = this, key?: string): FakeEvent {
@@ -251,6 +265,19 @@ function buttonByName(root: FakeElement, name: string): FakeElement {
 }
 
 describe('Hud compact controls', () => {
+  it('gives simultaneous HUD menus stable unique ids', () => {
+    const first = setupHud().parent
+    const second = setupHud().parent
+    const firstMenu = first.querySelector('.hud-more-menu')!
+    const secondMenu = second.querySelector('.hud-more-menu')!
+
+    expect(firstMenu.id).toMatch(/^hud-more-menu-\d+$/)
+    expect(secondMenu.id).toMatch(/^hud-more-menu-\d+$/)
+    expect(firstMenu.id).not.toBe(secondMenu.id)
+    expect(buttonByName(first, '게임 메뉴 열기').getAttribute('aria-controls')).toBe(firstMenu.id)
+    expect(buttonByName(second, '게임 메뉴 열기').getAttribute('aria-controls')).toBe(secondMenu.id)
+  })
+
   it('keeps only level, sound, and more as top-level controls and preserves menu callbacks', () => {
     const { callbacks, parent } = setupHud()
     const topButtons = parent.querySelector('.top-buttons')!.children
@@ -298,6 +325,55 @@ describe('Hud compact controls', () => {
     expect(menu.hidden).toBe(true)
     expect(documentFake.activeElement).toBe(more)
   })
+
+  it.each([
+    ['Tab', false],
+    ['Shift+Tab', true],
+  ])('closes the role menu on %s and returns focus to more', (_label, shiftKey) => {
+    const { parent } = setupHud()
+    const more = buttonByName(parent, '게임 메뉴 열기')
+    const menu = parent.querySelector('.hud-more-menu')!
+    more.click()
+
+    const event = menu.dispatch('keydown', 'Tab', shiftKey)
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(menu.hidden).toBe(true)
+    expect(more.getAttribute('aria-expanded')).toBe('false')
+    expect(documentFake.activeElement).toBe(more)
+  })
+
+  it('destroys once without later callbacks, focus changes, timers, or document listeners', () => {
+    const { callbacks, hud, parent } = setupHud()
+    const more = buttonByName(parent, '게임 메뉴 열기')
+    const sound = buttonByName(parent, '소리 끄기')
+    const menu = parent.querySelector('.hud-more-menu')!
+    const share = buttonByName(menu, '기록 카드 공유')
+    const feedback = parent.querySelector('.hud-progress-feedback')!
+    const outside = documentFake.createElement('button')
+    more.click()
+    hud.showProgressGain({ xp: 50, levelUp: 2 })
+    outside.focus()
+
+    hud.destroy()
+    hud.destroy()
+    documentFake.dispatch('keydown', documentFake, 'Escape')
+    documentFake.dispatch('pointerdown', outside)
+    more.click()
+    sound.click()
+    share.click()
+
+    expect(callbacks.onToggleSound).not.toHaveBeenCalled()
+    expect(callbacks.onShare).not.toHaveBeenCalled()
+    expect(menu.hidden).toBe(true)
+    expect(documentFake.activeElement).toBe(outside)
+    expect(feedback.hidden).toBe(true)
+    expect(feedback.children).toHaveLength(0)
+    expect(parent.children).toHaveLength(0)
+    expect(documentFake.listeners.get('keydown')).toEqual([])
+    expect(documentFake.listeners.get('pointerdown')).toEqual([])
+    expect(window.clearTimeout).toHaveBeenCalled()
+  })
 })
 
 describe('Hud progress feedback', () => {
@@ -311,12 +387,45 @@ describe('Hud progress feedback', () => {
     expect(level.style.getPropertyValue('--hud-level-ratio')).toBe('1')
     expect(parent.querySelectorAll('[aria-live]')).toHaveLength(1)
 
-    hud.showProgressGain({ xp: 9_999, levelUp: 6 })
+    hud.showProgressGain({ xp: 9_999, levelUp: 99 })
+    const highFeedback = parent.querySelector('.hud-progress-feedback')!
+    expect(highFeedback.textContent).toContain('경험치 +4700')
+    expect(highFeedback.textContent).toContain('레벨 20')
     hud.showProgressGain({ xp: 50, levelUp: null })
     const feedback = parent.querySelector('.hud-progress-feedback')!
     expect(feedback.getAttribute('aria-hidden')).toBe('true')
     expect(feedback.querySelectorAll('.hud-xp-fragment').length).toBeLessThanOrEqual(3)
     expect(parent.querySelectorAll('[aria-live]')).toHaveLength(1)
+  })
+
+  it.each([
+    {
+      name: 'high',
+      input: { level: 99, xp: 99_999, nextLevelXp: 99_999, ratio: 99, unseen: 99 },
+      level: 'LV 20', detail: '4700 / 4700', ratio: '1', aria: '기록책 열기, 현재 레벨 20, 새 업적 32개', badge: '32',
+    },
+    {
+      name: 'negative',
+      input: { level: -9, xp: -1, nextLevelXp: -1, ratio: -5, unseen: -2 },
+      level: 'LV 1', detail: '0 경험치', ratio: '0', aria: '기록책 열기, 현재 레벨 1', badge: '',
+    },
+    {
+      name: 'nonfinite',
+      input: { level: Number.NaN, xp: Number.POSITIVE_INFINITY, nextLevelXp: Number.NaN, ratio: Number.NaN, unseen: Number.NEGATIVE_INFINITY },
+      level: 'LV 1', detail: '0 경험치', ratio: '0', aria: '기록책 열기, 현재 레벨 1', badge: '',
+    },
+  ])('clamps $name progress to product bounds', ({ input, level, detail, ratio, aria, badge }) => {
+    const { hud, parent } = setupHud()
+    hud.setProgress(input)
+    const levelButton = parent.querySelector('.hud-level-button')!
+    const unseenBadge = parent.querySelector('.hud-unseen-badge')!
+
+    expect(parent.querySelector('.hud-level-value')!.textContent).toBe(level)
+    expect(parent.querySelector('.hud-level-detail')!.textContent).toBe(detail)
+    expect(levelButton.style.getPropertyValue('--hud-level-ratio')).toBe(ratio)
+    expect(levelButton.getAttribute('aria-label')).toBe(aria)
+    expect(unseenBadge.textContent).toBe(badge)
+    expect(unseenBadge.hidden).toBe(badge === '')
   })
 
   it('defines mobile-safe controls and static feedback for both reduced-motion modes', async () => {
@@ -333,6 +442,12 @@ describe('Hud progress feedback', () => {
     )
     expect(css).toMatch(
       /html\.reduce-motion \.hud-progress-feedback[^{]*\{[^}]*transform:\s*none\s*!important/s
+    )
+    expect(css).toMatch(
+      /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.hud-menu-item:active[^{]*\{[^}]*transform:\s*none\s*!important/s
+    )
+    expect(css).toMatch(
+      /html\.reduce-motion \.hud-menu-item:active[^{]*\{[^}]*transform:\s*none\s*!important/s
     )
   })
 })

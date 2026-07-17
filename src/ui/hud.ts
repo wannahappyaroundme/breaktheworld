@@ -31,9 +31,12 @@ export interface HudProgressGain {
   levelUp: number | null
 }
 
-const HUD_MORE_MENU_ID = 'hud-more-menu'
 const MAX_XP_FRAGMENTS = 3
 const PROGRESS_FEEDBACK_MS = 1_000
+const MAX_LEVEL = 20
+const MAX_ACHIEVEMENTS = 32
+const MAX_ACHIEVEMENT_XP = 4_700
+let hudInstanceSequence = 0
 
 function browserScheduler(): NotificationScheduler {
   return {
@@ -53,6 +56,7 @@ function span(className: string, text: string): HTMLSpanElement {
 
 /** Top HUD with one queued live-region notice renderer. */
 export class Hud {
+  private top: HTMLDivElement
   private comboN: HTMLSpanElement
   private comboBox: HTMLDivElement
   private bestEl: HTMLSpanElement
@@ -72,11 +76,32 @@ export class Hud {
   private noticeEl: HTMLDivElement
   private notices: NotificationQueue
   private noticeSequence = 0
+  private destroyed = false
+  private readonly timers = new Set<number>()
+  private readonly transientFeedback = new Set<HTMLElement>()
+  private readonly handleDocumentKeydown = (event: KeyboardEvent): void => {
+    if (this.destroyed || event.key !== 'Escape' || this.moreMenu.hidden) return
+    event.preventDefault()
+    this.closeMenu(true)
+  }
+  private readonly handleDocumentPointerdown = (event: PointerEvent): void => {
+    if (this.destroyed) return
+    const target = event.target as Node
+    if (
+      this.moreMenu.hidden
+      || this.moreMenu.contains(target)
+      || this.moreBtn.contains(target)
+    ) return
+    this.closeMenu(true)
+  }
+  private readonly handleMenuKeydown = (event: KeyboardEvent): void => {
+    this.onMenuKeydown(event)
+  }
 
   constructor(parent: HTMLElement, cb: HudCallbacks, options: HudOptions = {}) {
     this.parent = parent
-    const top = document.createElement('div')
-    top.className = 'hud-top'
+    this.top = document.createElement('div')
+    this.top.className = 'hud-top'
 
     this.comboBox = document.createElement('div')
     this.comboBox.className = 'combo'
@@ -88,7 +113,10 @@ export class Hud {
     this.controls.className = 'hud-controls'
     const buttons = document.createElement('div')
     buttons.className = 'top-buttons'
-    this.levelBtn = mkBtn('기록책 열기, 현재 레벨 1', cb.onOpenRecordBook ?? cb.onWhatsNew)
+    this.levelBtn = mkBtn(
+      '기록책 열기, 현재 레벨 1',
+      () => this.runCallback(cb.onOpenRecordBook ?? cb.onWhatsNew),
+    )
     this.levelBtn.classList.add('hud-level-button')
     this.levelValue = span('hud-level-value', 'LV 1')
     this.levelDetail = span('hud-level-detail', '0 / 50')
@@ -101,7 +129,7 @@ export class Hud {
     this.levelBtn.append(this.levelValue, this.levelDetail, this.unseenBadge, levelTrack)
     this.levelBtn.style.setProperty('--hud-level-ratio', '0')
 
-    this.soundBtn = mkBtn('소리 끄기', cb.onToggleSound)
+    this.soundBtn = mkBtn('소리 끄기', () => this.runCallback(cb.onToggleSound))
     this.soundBtn.classList.add('hud-sound-button')
     this.soundMark = span('hud-sound-mark', '')
     this.soundMark.setAttribute('aria-hidden', 'true')
@@ -110,41 +138,30 @@ export class Hud {
     this.moreBtn = mkBtn('게임 메뉴 열기', () => this.toggleMenu())
     this.moreBtn.classList.add('hud-more-button')
     this.moreBtn.setAttribute('aria-expanded', 'false')
-    this.moreBtn.setAttribute('aria-controls', HUD_MORE_MENU_ID)
+    const moreMenuId = `hud-more-menu-${++hudInstanceSequence}`
+    this.moreBtn.setAttribute('aria-controls', moreMenuId)
     this.moreBtn.setAttribute('aria-haspopup', 'menu')
     this.moreBtn.appendChild(mark('hud-more-mark'))
     buttons.append(this.levelBtn, this.soundBtn, this.moreBtn)
 
     this.moreMenu = document.createElement('div')
-    this.moreMenu.id = HUD_MORE_MENU_ID
+    this.moreMenu.id = moreMenuId
     this.moreMenu.className = 'hud-more-menu'
     this.moreMenu.hidden = true
     this.moreMenu.setAttribute('role', 'menu')
-    this.moreMenu.addEventListener('keydown', (event) => this.onMenuKeydown(event))
+    this.moreMenu.addEventListener('keydown', this.handleMenuKeydown)
     this.moreMenu.append(
-      menuButton('기록 카드 공유', cb.onShare, () => this.closeMenu(true)),
-      menuButton('다음 타겟', cb.onNext, () => this.closeMenu(true)),
-      menuButton('처음부터', cb.onReset, () => this.closeMenu(true)),
+      menuButton('기록 카드 공유', () => this.runCallback(cb.onShare), () => this.closeMenu(true)),
+      menuButton('다음 타겟', () => this.runCallback(cb.onNext), () => this.closeMenu(true)),
+      menuButton('처음부터', () => this.runCallback(cb.onReset), () => this.closeMenu(true)),
     )
     this.controls.append(buttons, this.moreMenu)
 
-    top.append(this.comboBox, this.controls)
-    parent.appendChild(top)
+    this.top.append(this.comboBox, this.controls)
+    parent.appendChild(this.top)
 
-    document.addEventListener('keydown', (event) => {
-      if (event.key !== 'Escape' || this.moreMenu.hidden) return
-      event.preventDefault()
-      this.closeMenu(true)
-    })
-    document.addEventListener('pointerdown', (event) => {
-      const target = event.target as Node
-      if (
-        this.moreMenu.hidden
-        || this.moreMenu.contains(target)
-        || this.moreBtn.contains(target)
-      ) return
-      this.closeMenu(true)
-    })
+    document.addEventListener('keydown', this.handleDocumentKeydown)
+    document.addEventListener('pointerdown', this.handleDocumentPointerdown)
 
     this.feverBanner = document.createElement('div')
     this.feverBanner.className = 'fever-banner'
@@ -172,25 +189,29 @@ export class Hud {
   }
 
   setFever(on: boolean): void {
+    if (this.destroyed) return
     this.feverBanner.classList.toggle('on', on)
   }
 
   setCombo(n: number): void {
+    if (this.destroyed) return
     this.comboN.textContent = String(n)
     this.comboBox.classList.add('bump')
-    window.setTimeout(() => this.comboBox.classList.remove('bump'), 90)
+    this.schedule(() => this.comboBox.classList.remove('bump'), 90)
   }
 
   setMuted(muted: boolean): void {
+    if (this.destroyed) return
     this.soundBtn.setAttribute('aria-label', muted ? '소리 켜기' : '소리 끄기')
     this.soundMark.classList.toggle('muted', muted)
   }
 
   setProgress(progress: HudProgress): void {
-    const level = boundedInteger(progress.level, 1)
-    const xp = boundedInteger(progress.xp)
-    const nextLevelXp = boundedInteger(progress.nextLevelXp)
-    const unseen = boundedInteger(progress.unseen)
+    if (this.destroyed) return
+    const level = boundedInteger(progress.level, 1, MAX_LEVEL)
+    const xp = boundedInteger(progress.xp, 0, MAX_ACHIEVEMENT_XP)
+    const nextLevelXp = boundedInteger(progress.nextLevelXp, 0, MAX_ACHIEVEMENT_XP)
+    const unseen = boundedInteger(progress.unseen, 0, MAX_ACHIEVEMENTS)
     const ratio = boundedRatio(progress.ratio)
     this.levelValue.textContent = `LV ${level}`
     this.levelDetail.textContent = nextLevelXp > 0 ? `${xp} / ${nextLevelXp}` : `${xp} 경험치`
@@ -203,11 +224,14 @@ export class Hud {
   }
 
   showProgressGain(gain: HudProgressGain): void {
-    const xp = boundedInteger(gain.xp)
-    const levelUp = gain.levelUp === null ? null : boundedInteger(gain.levelUp, 1)
+    if (this.destroyed) return
+    const xp = boundedInteger(gain.xp, 0, MAX_ACHIEVEMENT_XP)
+    const levelUp = gain.levelUp === null || !Number.isFinite(gain.levelUp)
+      ? null
+      : boundedInteger(gain.levelUp, 1, MAX_LEVEL)
     if (xp === 0 && levelUp === null) return
 
-    if (this.progressFeedbackTimer !== null) window.clearTimeout(this.progressFeedbackTimer)
+    if (this.progressFeedbackTimer !== null) this.clearTimer(this.progressFeedbackTimer)
     this.progressFeedback.classList.remove('show')
     this.progressFeedback.replaceChildren()
     if (xp > 0) {
@@ -229,7 +253,7 @@ export class Hud {
     this.progressFeedback.classList.add('show')
     this.levelBtn.classList.toggle('level-up', levelUp !== null)
     this.levelBtn.classList.add('progress-gain')
-    this.progressFeedbackTimer = window.setTimeout(() => {
+    this.progressFeedbackTimer = this.schedule(() => {
       this.progressFeedback.classList.remove('show', 'level-up')
       this.progressFeedback.hidden = true
       this.levelBtn.classList.remove('progress-gain', 'level-up')
@@ -238,19 +262,49 @@ export class Hud {
   }
 
   flashWeapon(name: string): void {
+    if (this.destroyed) return
     const el = document.createElement('div')
     el.className = 'weapon-flash show'
     el.textContent = `${name}!`
     this.parent.appendChild(el)
-    window.setTimeout(() => el.remove(), 700)
+    this.transientFeedback.add(el)
+    this.schedule(() => {
+      el.remove()
+      this.transientFeedback.delete(el)
+    }, 700)
   }
 
   setBest(n: number): void {
+    if (this.destroyed) return
     this.bestEl.textContent = `🏆 ${n}`
   }
 
   notify(input: NotificationInput): boolean {
+    if (this.destroyed) return false
     return this.notices.push(input)
+  }
+
+  destroy(): void {
+    if (this.destroyed) return
+    this.destroyed = true
+    document.removeEventListener('keydown', this.handleDocumentKeydown)
+    document.removeEventListener('pointerdown', this.handleDocumentPointerdown)
+    this.moreMenu.removeEventListener('keydown', this.handleMenuKeydown)
+    this.closeMenu(false)
+    this.notices.clear()
+    for (const timer of this.timers) window.clearTimeout(timer)
+    this.timers.clear()
+    this.progressFeedbackTimer = null
+    this.progressFeedback.replaceChildren()
+    this.progressFeedback.classList.remove('show', 'level-up')
+    this.progressFeedback.hidden = true
+    this.levelBtn.classList.remove('progress-gain', 'level-up')
+    for (const element of this.transientFeedback) element.remove()
+    this.transientFeedback.clear()
+    this.top.remove()
+    this.feverBanner.remove()
+    this.noticeEl.remove()
+    this.progressFeedback.remove()
   }
 
   /** Compatibility method routed through the shared record-priority queue. */
@@ -298,6 +352,7 @@ export class Hud {
   }
 
   private toggleMenu(): void {
+    if (this.destroyed) return
     if (this.moreMenu.hidden) {
       this.moreMenu.hidden = false
       this.moreBtn.setAttribute('aria-expanded', 'true')
@@ -315,6 +370,12 @@ export class Hud {
   }
 
   private onMenuKeydown(event: KeyboardEvent): void {
+    if (this.destroyed) return
+    if (event.key === 'Tab') {
+      event.preventDefault()
+      this.closeMenu(true)
+      return
+    }
     if (event.key === 'Escape') {
       event.preventDefault()
       this.closeMenu(true)
@@ -331,6 +392,25 @@ export class Hud {
     if (next === null) return
     event.preventDefault()
     items[next].focus()
+  }
+
+  private runCallback(callback: () => void): void {
+    if (!this.destroyed) callback()
+  }
+
+  private schedule(run: () => void, delayMs: number): number {
+    let handle = 0
+    handle = window.setTimeout(() => {
+      this.timers.delete(handle)
+      if (!this.destroyed) run()
+    }, delayMs)
+    this.timers.add(handle)
+    return handle
+  }
+
+  private clearTimer(handle: number): void {
+    window.clearTimeout(handle)
+    this.timers.delete(handle)
   }
 
   private showNotice(notice: QueuedNotification): void {
@@ -381,9 +461,9 @@ function menuButton(
   return button
 }
 
-function boundedInteger(value: number, minimum = 0): number {
+function boundedInteger(value: number, minimum: number, maximum: number): number {
   if (!Number.isFinite(value)) return minimum
-  return Math.max(minimum, Math.floor(value))
+  return Math.min(maximum, Math.max(minimum, Math.floor(value)))
 }
 
 function boundedRatio(value: number): number {
