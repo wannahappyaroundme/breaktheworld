@@ -78,7 +78,15 @@ export function createSettingsSection(
   const section = doc.createElement('section')
   section.className = 'recordbook-section recordbook-settings'
   section.setAttribute('data-recordbook-settings', '')
-  section.appendChild(textElement(doc, 'h3', '설정'))
+  section.append(
+    textElement(doc, 'h3', '설정'),
+    textElement(
+      doc,
+      'p',
+      '원하는 조작과 반응을 바로 바꿀 수 있어요',
+      'recordbook-settings-intro'
+    )
+  )
 
   const strongGroup = doc.createElement('div')
   strongGroup.className = 'recordbook-setting-group'

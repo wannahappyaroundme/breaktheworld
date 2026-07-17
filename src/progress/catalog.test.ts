@@ -852,6 +852,80 @@ describe('permanent achievements', () => {
 })
 
 describe('record-book view model', () => {
+  it('shows exact progression, completion, nearest goals, and recent backfill', () => {
+    const state = createDefaultProgress('hub-summary')
+    state.lifetime.validHits = 100
+    state.lifetime.totalTargets = 25
+    state.achievements = {
+      first_hit: { unlockedAt: ACHIEVEMENT_CATALOG_PUBLISHED_AT, seen: false },
+      hits_100: { unlockedAt: ACHIEVEMENT_CATALOG_PUBLISHED_AT, seen: false },
+      destroys_25: { unlockedAt: ACHIEVEMENT_CATALOG_PUBLISHED_AT, seen: false },
+    }
+
+    const view = makeRecordBookView(state, BUILT_IN_CATALOG)
+
+    expect(view.summary).toMatchObject({
+      level: 4,
+      xp: 250,
+      currentLevelXp: 200,
+      nextLevelXp: 300,
+      completed: 3,
+      total: 32,
+      completionText: '3 / 32, 9%',
+    })
+    expect(view.summary.nearest).toHaveLength(3)
+    expect(view.summary.nearest.every(({ complete }) => !complete)).toBe(true)
+    expect(view.summary.nearest.map(({ ratio }) => ratio)).toEqual(
+      [...view.summary.nearest.map(({ ratio }) => ratio)].sort((left, right) => right - left)
+    )
+    expect(view.summary.recent).toEqual({
+      count: 3,
+      xp: 250,
+      copy: '지난 기록으로 업적 3개를 찾았어요, 경험치 +250',
+    })
+    expect(view.achievements.items).toHaveLength(32)
+    expect(view.achievements.items[0]).toMatchObject({
+      id: 'first_hit',
+      tierLabel: '쉬움',
+      description: '유효 공격 1회',
+      xp: 50,
+      progressText: '1 / 1, 100%',
+      category: 'destruction',
+      categoryLabel: '파괴 기록',
+      titleReward: false,
+    })
+  })
+
+  it('exposes every cosmetic reward with its lock requirement and safe selected state', () => {
+    const state = createDefaultProgress('hub-cosmetics')
+    state.achievements.first_hit = {
+      unlockedAt: ACHIEVEMENT_CATALOG_PUBLISHED_AT,
+      seen: true,
+    }
+
+    const view = makeRecordBookView(state, BUILT_IN_CATALOG)
+
+    expect(view.cosmetics.titles).toHaveLength(8)
+    expect(view.cosmetics.frames).toHaveLength(5)
+    expect(view.cosmetics.themes).toHaveLength(4)
+    expect(view.cosmetics.skins).toHaveLength(2)
+    expect(view.cosmetics.frames.find(({ id }) => id === 'first_crack')).toMatchObject({
+      unlocked: false,
+      requirement: '레벨 5가 되면 고를 수 있어요',
+    })
+    expect(view.cosmetics.themes.find(({ id }) => id === 'electric_night')).toMatchObject({
+      unlocked: false,
+      requirement: '레벨 10이 되면 고를 수 있어요',
+    })
+    expect(view.cosmetics.titles.find(({ id }) => id === 'moves_30')?.requirement)
+      .toBe("'기술 박사' 업적을 완료하면 고를 수 있어요")
+    expect(view.profile).toEqual({
+      selectedTitle: null,
+      frameId: 'default',
+      recordBookThemeId: 'default',
+    })
+  })
+
   it('returns stable ordered plain Korean display data without mutation or DOM values', () => {
     const state = daily(createDefaultProgress('seed'), {
       dayKey: '2026-07-16',
@@ -881,7 +955,7 @@ describe('record-book view model', () => {
       progressText: '1 / 3',
       complete: false,
     })
-    expect(view.achievements.heading).toBe('부순 기록')
+    expect(view.achievements.heading).toBe('업적')
     expect(view.achievements.items.map((item) => item.id)).toEqual(
       ACHIEVEMENTS.map((achievement) => achievement.id)
     )
@@ -889,12 +963,11 @@ describe('record-book view model', () => {
       name: '첫 와장창',
       complete: true,
       seen: false,
-      selectableTitle: '첫 와장창',
+      description: '타겟 1개 파괴',
+      tierLabel: '쉬움',
+      progressText: '1 / 1, 100%',
     })
-    expect(view.achievements.items.find(({ id }) => id === 'first_hit')?.selectableTitle).toBeNull()
-    expect(view.skins).toEqual({
-      heading: '캐릭터 모습',
-      items: [
+    expect(view.cosmetics.skins).toEqual([
         {
           id: 'cinnamoroll',
           name: '시나모롤',
@@ -911,8 +984,7 @@ describe('record-book view model', () => {
             { id: 'classic', label: '클래식', selected: false },
           ],
         },
-      ],
-    })
+      ])
     expect(view.stats).toEqual({
       heading: '내 기록',
       items: [
@@ -922,7 +994,7 @@ describe('record-book view model', () => {
         { label: '사용한 무기', value: '2종' },
       ],
     })
-    expect(view.selectedTitle).toBe('첫 와장창')
+    expect(view.profile.selectedTitle).toBe('첫 와장창')
     expect(JSON.stringify(view)).not.toContain('—')
     expect(JSON.stringify(state)).toBe(before)
     expect(makeRecordBookView(state, BUILT_IN_CATALOG)).toEqual(view)
@@ -932,6 +1004,6 @@ describe('record-book view model', () => {
       ...state,
       profile: { ...state.profile, selectedTitle: '꾹 와장창 장인' },
     }
-    expect(makeRecordBookView(lockedTitle, BUILT_IN_CATALOG).selectedTitle).toBeNull()
+    expect(makeRecordBookView(lockedTitle, BUILT_IN_CATALOG).profile.selectedTitle).toBeNull()
   })
 })

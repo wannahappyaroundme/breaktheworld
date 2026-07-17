@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { BUILT_IN_CATALOG } from '../progress/catalog'
+import { createDefaultProgress } from '../progress/defaults'
 import type { RecordBookView } from '../progress/view-model'
+import { makeRecordBookView } from '../progress/view-model'
 import type { ProfileCardView } from '../player/types'
 import { Hud } from './hud'
 import type { NotificationScheduler } from './notification-queue'
@@ -113,6 +116,11 @@ class FakeElement {
     node.parentElement = this
     this.children.push(node)
     return node
+  }
+
+  prepend(node: FakeElement): void {
+    node.parentElement = this
+    this.children.unshift(node)
   }
 
   replaceChildren(...nodes: FakeElement[]): void {
@@ -245,56 +253,31 @@ class FakeScheduler implements NotificationScheduler {
   }
 }
 
+const viewState = createDefaultProgress('recordbook-test')
+viewState.daily = {
+  ...viewState.daily,
+  dayKey: '2026-07-17',
+  questId: 'targets_3',
+  target: 3,
+  progress: 1,
+}
+viewState.lifetime.bestCombo = 24
+viewState.achievements.hits_1000 = {
+  unlockedAt: '2026-07-17T00:00:00.000Z',
+  seen: false,
+}
+const baseView = makeRecordBookView(viewState, BUILT_IN_CATALOG)
 const view: RecordBookView = {
-  daily: {
-    heading: '오늘의 도전',
-    copy: '<img src=x onerror=alert(1)>',
-    progress: 1,
-    target: 3,
-    progressText: '1 / 3',
-    complete: false,
-  },
-  achievements: {
-    heading: '부순 기록',
-    items: [
-      {
-        id: 'first_destroy',
-        name: '첫 와장창',
-        next: '타겟 1개 부수기',
-        progress: 1,
-        target: 1,
-        complete: true,
-        seen: false,
-        selectableTitle: '첫 와장창',
-      },
-      {
-        id: 'charge_master',
-        name: '꾹 와장창 장인',
-        next: '꾹 와장창 10번 하기',
-        progress: 2,
-        target: 10,
-        complete: false,
-        seen: false,
-        selectableTitle: null,
-      },
-    ],
-  },
-  skins: {
-    heading: '캐릭터 모습',
-    items: [{
-      id: 'cinnamoroll',
-      name: '시나모롤',
-      choices: [
-        { id: 'default', label: '기본', selected: true },
-        { id: 'classic', label: '클래식', selected: false },
-      ],
-    }],
+  ...baseView,
+  daily: { ...baseView.daily, copy: '<img src=x onerror=alert(1)>' },
+  cosmetics: {
+    ...baseView.cosmetics,
+    skins: [baseView.cosmetics.skins[0]],
   },
   stats: {
     heading: '내 기록',
     items: [{ label: '최고 연속', value: '24' }],
   },
-  selectedTitle: null,
 }
 
 const settings: RecordBookSettingsState = {
@@ -327,8 +310,187 @@ function byAttribute(root: FakeElement, name: string, value: string): FakeElemen
   return found
 }
 
+function buttonByText(root: FakeElement, text: string): FakeElement {
+  const found = root.querySelectorAll('button').find((button) => button.textContent === text)
+  if (!found) throw new Error(`Missing button: ${text}`)
+  return found
+}
+
+function visibleButton(button: FakeElement, boundary: FakeElement): boolean {
+  if (button.disabled || button.getAttribute('tabindex') === '-1') return false
+  let current: FakeElement | null = button
+  while (current && current !== boundary) {
+    if (current.hidden) return false
+    current = current.parentElement
+  }
+  return true
+}
+
 describe('RecordBook', () => {
-  it('renders the profile button first and forwards one open action', () => {
+  it('renders one accessible full-screen hub with four named tabs and all public details', () => {
+    const parent = fakeDocument.createElement('div')
+    const hubView = makeRecordBookView(createDefaultProgress('hub-dom'), BUILT_IN_CATALOG)
+    const recordBook = new RecordBook(
+      parent as unknown as HTMLElement,
+      hubView,
+      settings,
+      { onTitleChange: vi.fn(), onSkinChange: vi.fn(), onSettingChange: vi.fn() }
+    )
+
+    recordBook.open()
+
+    expect(parent.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+    expect(parent.querySelector('[role="tablist"]')?.getAttribute('aria-label')).toBe('기록책 메뉴')
+    expect(parent.querySelectorAll('[role="tab"]').map((tab) => tab.textContent)).toEqual([
+      '홈', '업적', '꾸미기', '설정',
+    ])
+    expect(parent.textContent).toContain('다음 레벨: 50 경험치')
+    buttonByText(parent, '업적').click()
+    expect(parent.querySelectorAll('[data-achievement-id]')).toHaveLength(32)
+    const firstHit = byAttribute(parent, 'data-achievement-id', 'first_hit')
+    expect(firstHit.textContent).toContain('첫 금')
+    expect(firstHit.textContent).toContain('쉬움')
+    expect(firstHit.textContent).toContain('유효 공격 1회')
+    expect(firstHit.textContent).toContain('0 / 1, 0%')
+    expect(firstHit.textContent).toContain('경험치 +50')
+    expect(firstHit.textContent).toContain('다음: 유효 공격 1회')
+    const progress = firstHit.querySelector('progress')
+    expect(progress?.getAttribute('max')).toBe('1')
+    expect(progress?.getAttribute('value')).toBe('0')
+    expect(byAttribute(parent, 'data-achievement-id', 'hits_1000').textContent)
+      .toContain('칭호 보상: 산산조각')
+  })
+
+  it('keeps tab and panel relationships stable across multiple hub renders', () => {
+    const firstParent = fakeDocument.createElement('div')
+    const secondParent = fakeDocument.createElement('div')
+    const callbacks = {
+      onTitleChange: vi.fn(), onSkinChange: vi.fn(), onSettingChange: vi.fn(),
+    }
+    const first = new RecordBook(
+      firstParent as unknown as HTMLElement,
+      view,
+      settings,
+      callbacks
+    )
+    const firstHome = byAttribute(firstParent, 'data-hub-tab', 'home')
+    const firstId = firstHome.id
+    new RecordBook(secondParent as unknown as HTMLElement, view, settings, callbacks)
+
+    first.render(view, settings)
+
+    const renderedHome = byAttribute(firstParent, 'data-hub-tab', 'home')
+    const secondHome = byAttribute(secondParent, 'data-hub-tab', 'home')
+    expect(renderedHome.id).toBe(firstId)
+    expect(renderedHome.id).not.toBe(secondHome.id)
+    expect(renderedHome.getAttribute('aria-controls'))
+      .toBe(byAttribute(firstParent, 'data-hub-panel', 'home').id)
+  })
+
+  it('retains keyboard focus across tabs and filters without concealing locked conditions', () => {
+    const parent = fakeDocument.createElement('div')
+    const state = createDefaultProgress('hub-filter')
+    state.lifetime.validHits = 40
+    new RecordBook(
+      parent as unknown as HTMLElement,
+      makeRecordBookView(state, BUILT_IN_CATALOG),
+      settings,
+      {
+        onTitleChange: vi.fn(),
+        onSkinChange: vi.fn(),
+        onSettingChange: vi.fn(),
+        onTabChange: vi.fn(),
+        onFilterChange: vi.fn(),
+      }
+    )
+    const achievementsTab = buttonByText(parent, '업적')
+    achievementsTab.focus()
+    achievementsTab.click()
+    expect(fakeDocument.activeElement).toBe(achievementsTab)
+    expect(achievementsTab.getAttribute('aria-selected')).toBe('true')
+
+    const active = buttonByText(parent, '진행 중')
+    active.focus()
+    active.click()
+    expect(fakeDocument.activeElement).toBe(active)
+    expect(active.getAttribute('aria-pressed')).toBe('true')
+    const visibleCards = parent.querySelectorAll('[data-achievement-id]')
+      .filter((card) => !card.hidden)
+    expect(visibleCards.length).toBeGreaterThan(0)
+    expect(visibleCards.every((card) => card.textContent.includes('다음:'))).toBe(true)
+    expect(parent.querySelectorAll('[data-achievement-id]')).toHaveLength(32)
+
+    const skill = buttonByText(parent, '연속·충전')
+    skill.focus()
+    skill.click()
+    expect(fakeDocument.activeElement).toBe(skill)
+    expect(parent.querySelectorAll('[data-achievement-id]').filter((card) => !card.hidden)
+      .every((card) => card.getAttribute('data-achievement-category') === 'skill')).toBe(true)
+    const count = parent.querySelector('[data-achievement-filter-count]')
+    expect(count?.getAttribute('role')).toBe('status')
+    expect(count?.textContent).toBe('8개 업적 표시')
+  })
+
+  it('shows locked cosmetic requirements and never forwards a locked selection', () => {
+    const parent = fakeDocument.createElement('div')
+    const onFrameChange = vi.fn()
+    const onThemeChange = vi.fn()
+    new RecordBook(
+      parent as unknown as HTMLElement,
+      makeRecordBookView(createDefaultProgress('hub-locks'), BUILT_IN_CATALOG),
+      settings,
+      {
+        onTitleChange: vi.fn(),
+        onSkinChange: vi.fn(),
+        onSettingChange: vi.fn(),
+        onFrameChange,
+        onThemeChange,
+      }
+    )
+    buttonByText(parent, '꾸미기').click()
+    const lockedFrame = byAttribute(parent, 'data-frame', 'first_crack')
+    const lockedTheme = byAttribute(parent, 'data-theme', 'electric_night')
+
+    expect(lockedFrame.disabled).toBe(true)
+    expect(lockedFrame.textContent).toContain('레벨 5가 되면 고를 수 있어요')
+    expect(lockedTheme.disabled).toBe(true)
+    expect(lockedTheme.textContent).toContain('레벨 10이 되면 고를 수 있어요')
+    lockedFrame.click()
+    lockedTheme.click()
+    expect(onFrameChange).not.toHaveBeenCalled()
+    expect(onThemeChange).not.toHaveBeenCalled()
+
+    byAttribute(parent, 'data-frame', 'default').click()
+    byAttribute(parent, 'data-theme', 'default').click()
+    expect(onFrameChange).toHaveBeenCalledWith('default')
+    expect(onThemeChange).toHaveBeenCalledWith('default')
+  })
+
+  it('keeps an already selected legacy title available to remove', () => {
+    const parent = fakeDocument.createElement('div')
+    const state = createDefaultProgress('legacy-title')
+    state.achievements.first_destroy = {
+      unlockedAt: '2026-07-16T00:00:00.000Z',
+      seen: true,
+    }
+    state.profile.selectedTitle = '첫 와장창'
+    const onTitleChange = vi.fn()
+
+    new RecordBook(
+      parent as unknown as HTMLElement,
+      makeRecordBookView(state, BUILT_IN_CATALOG),
+      settings,
+      { onTitleChange, onSkinChange: vi.fn(), onSettingChange: vi.fn() }
+    )
+
+    const selected = byAttribute(parent, 'data-title', '첫 와장창')
+    expect(selected.getAttribute('aria-pressed')).toBe('true')
+    expect(selected.textContent).toContain('현재 사용 중인 칭호예요')
+    selected.click()
+    expect(onTitleChange).toHaveBeenCalledWith(null)
+  })
+
+  it('renders the profile button in settings and forwards one open action', () => {
     const parent = fakeDocument.createElement('div')
     const onOpenProfile = vi.fn()
     const recordBook = new RecordBook(
@@ -341,10 +503,9 @@ describe('RecordBook', () => {
       },
       guestProfile,
     )
-    const scroll = parent.querySelector('.recordbook-scroll')!
     const profile = byAttribute(parent, 'data-recordbook-profile', 'guest')
 
-    expect(scroll.children[0]).toBe(profile)
+    expect(byAttribute(parent, 'data-hub-panel', 'settings').contains(profile)).toBe(true)
     expect(profile.tagName).toBe('BUTTON')
     expect(profile.getAttribute('aria-label')).toBe('프로필 열기')
     expect(profile.textContent).toContain('게스트로 즐기는 중')
@@ -374,6 +535,7 @@ describe('RecordBook', () => {
       profile,
     )
     const previous = byAttribute(parent, 'data-recordbook-profile', 'player')
+    buttonByText(parent, '설정').click()
     previous.focus()
 
     recordBook.render(view, settings, { ...profile, sync: 'saved' })
@@ -383,7 +545,7 @@ describe('RecordBook', () => {
     expect(fakeDocument.activeElement?.textContent).toContain('기록이 저장됐어요')
   })
 
-  it('renders the exact four data sections before settings with text-only remote copy', () => {
+  it('renders the exact four panels with text-only remote copy', () => {
     const parent = fakeDocument.createElement('div')
     const recordBook = new RecordBook(
       parent as unknown as HTMLElement,
@@ -395,15 +557,17 @@ describe('RecordBook', () => {
 
     expect(dialog.getAttribute('aria-modal')).toBe('true')
     expect(dialog.getAttribute('aria-labelledby')).not.toBeNull()
-    expect(parent.querySelectorAll('[data-recordbook-section]').map((section) =>
-      section.getAttribute('data-recordbook-section')
-    )).toEqual(['오늘의 도전', '부순 기록', '캐릭터 모습', '내 기록'])
+    expect(parent.querySelectorAll('[data-hub-panel]').map((section) =>
+      section.getAttribute('data-hub-panel')
+    )).toEqual(['home', 'achievements', 'cosmetics', 'settings'])
     expect(parent.querySelector('[data-recordbook-settings]')).not.toBeNull()
+    expect(parent.querySelector('[data-recordbook-settings]')?.textContent)
+      .toContain('원하는 조작과 반응을 바로 바꿀 수 있어요')
     expect(parent.textContent).toContain('<img src=x onerror=alert(1)>')
     expect(recordBook.isOpen).toBe(false)
   })
 
-  it('offers only unlocked titles and provided skins, then forwards one callback per change', () => {
+  it('offers all title requirements and provided skins, then forwards unlocked changes', () => {
     const parent = fakeDocument.createElement('div')
     const onTitleChange = vi.fn()
     const onSkinChange = vi.fn()
@@ -414,15 +578,15 @@ describe('RecordBook', () => {
       onSettingChange,
     })
 
-    byAttribute(parent, 'data-title', '첫 와장창').click()
-    expect(parent.querySelector('[data-title="꾹 와장창 장인"]')).toBeNull()
+    byAttribute(parent, 'data-title', '산산조각').click()
+    expect(byAttribute(parent, 'data-title', '기술 박사').disabled).toBe(true)
     byAttribute(parent, 'data-skin', 'cinnamoroll:classic').click()
     byAttribute(parent, 'data-setting', 'strongInput:doubleTap').click()
     byAttribute(parent, 'data-setting', 'reducedMotion').click()
     byAttribute(parent, 'data-setting', 'haptics').click()
 
     expect(onTitleChange).toHaveBeenCalledOnce()
-    expect(onTitleChange).toHaveBeenCalledWith('첫 와장창')
+    expect(onTitleChange).toHaveBeenCalledWith('산산조각')
     expect(onSkinChange).toHaveBeenCalledWith('cinnamoroll', 'classic')
     expect(onSettingChange.mock.calls).toEqual([
       [{ key: 'strongInput', value: 'doubleTap' }],
@@ -450,12 +614,13 @@ describe('RecordBook', () => {
       { onTitleChange: vi.fn(), onSkinChange: vi.fn(), onSettingChange: vi.fn() }
     )
     const previous = byAttribute(parent, 'data-skin', 'cinnamoroll:classic')
+    buttonByText(parent, '꾸미기').click()
     previous.focus()
     const changedView: RecordBookView = {
       ...view,
-      skins: {
-        ...view.skins,
-        items: view.skins.items.map((item) => ({
+      cosmetics: {
+        ...view.cosmetics,
+        skins: view.cosmetics.skins.map((item) => ({
           ...item,
           choices: item.choices.map((choice) => ({
             ...choice,
@@ -480,14 +645,12 @@ describe('RecordBook', () => {
       { onTitleChange: vi.fn(), onSkinChange: vi.fn(), onSettingChange: vi.fn() }
     )
     recordBook.open()
-    byAttribute(parent, 'data-title', '첫 와장창').focus()
+    buttonByText(parent, '업적').click()
+    byAttribute(parent, 'data-achievement-status-filter', 'active').focus()
 
     recordBook.setGamificationVisible(false)
 
-    const gamificationSections = parent.querySelectorAll('[data-recordbook-section]')
-      .filter((section) => ['오늘의 도전', '부순 기록'].includes(
-        section.getAttribute('data-recordbook-section') ?? ''
-      ))
+    const gamificationSections = parent.querySelectorAll('[data-gamification]')
     expect(gamificationSections.every((section) => section.hidden)).toBe(true)
     expect(fakeDocument.activeElement?.getAttribute('aria-label')).toBe('기록책 닫기')
   })
@@ -507,8 +670,9 @@ describe('RecordBook', () => {
 
     recordBook.open()
     const backdrop = parent.querySelector('.recordbook-backdrop')!
-    const buttons = parent.querySelectorAll('button')
-    const dialogButtons = buttons.filter((button) => button !== opener)
+    const sheet = parent.querySelector('.recordbook-sheet')!
+    const dialogButtons = sheet.querySelectorAll('button')
+      .filter((button) => visibleButton(button, sheet))
     expect(recordBook.isOpen).toBe(true)
     expect(backdrop.hidden).toBe(false)
     expect(fakeDocument.activeElement).toBe(dialogButtons[0])
@@ -541,6 +705,34 @@ describe('RecordBook', () => {
     expect(sheet.dispatch('pointerdown').propagationStopped).toBe(true)
     expect(sheet.dispatch('touchstart').propagationStopped).toBe(true)
     expect(sheet.dispatch('touchmove').propagationStopped).toBe(true)
+  })
+
+  it('uses the approved arcade tokens and mobile-safe full-screen hub styles', async () => {
+    const { readFileSync } = await vi.importActual<{
+      readFileSync(path: URL, encoding: 'utf8'): string
+    }>('node:fs')
+    const styleCss = readFileSync(new URL('../style.css', import.meta.url), 'utf8')
+    for (const token of [
+      '--night-ink: #0d1326',
+      '--arena-navy: #1a2342',
+      '--paper-warm: #fff8e7',
+      '--smash-yellow: #ffd23f',
+      '--impact-coral: #ff6b6b',
+      '--electric-sky: #61d4ff',
+      '--ink-text: #202133',
+      '--night-text: #fff8e7',
+    ]) {
+      expect(styleCss).toContain(token)
+    }
+    expect(styleCss).toMatch(/\.recordbook-sheet\s*\{[^}]*width:\s*100%[^}]*height:\s*100(?:dvh|%)/s)
+    expect(styleCss).toMatch(/\.recordbook-scroll\s*\{[^}]*overflow-x:\s*hidden[^}]*overflow-y:\s*auto/s)
+    expect(styleCss).toMatch(/\.recordbook-(?:tab|filter|close)[^{]*\{[^}]*min-height:\s*(?:44|48)px/s)
+    expect(styleCss).toMatch(/\.recordbook-[^{]*:focus-visible/s)
+    expect(styleCss).toMatch(/@media\s*\(max-width:\s*340px\)/)
+    expect(styleCss).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.recordbook-sheet/)
+    const recordBookCss = styleCss.split('/* ===== record-book')[1]
+      ?.split("/* ===== what's-new")[0] ?? ''
+    expect(recordBookCss).not.toContain('backdrop-filter')
   })
 })
 
