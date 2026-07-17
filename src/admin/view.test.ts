@@ -172,6 +172,16 @@ const EMPTY_METRICS: DailyMetrics = {
   sharesCompleted: 0,
   characterUses: [],
   averageFinishActions: null,
+  achievementHubOpens: 0,
+  achievementsUnlocked: 0,
+  highestLevelReached: null,
+  cosmeticSelections: 0,
+  profileSteps: [
+    { step: 'choice', count: 0 },
+    { step: 'id', count: 0 },
+    { step: 'pin', count: 0 },
+    { step: 'complete', count: 0 },
+  ],
 }
 
 const PLAYER_ID = '11111111-1111-4111-8111-111111111111'
@@ -242,6 +252,39 @@ afterEach(() => {
 })
 
 describe('operator view helpers', () => {
+  it('renders the progression flow and its exact empty state in the isolated metrics section', async () => {
+    installFakeDocument()
+    const root = new FakeElement('DIV')
+    await new AdminView(root as unknown as HTMLElement, dashboardApi()).start()
+
+    const metrics = sectionByHeading(root, '사용 통계')
+    expect(metrics.textContent).toContain('성장 흐름')
+    expect(metrics.textContent).toContain('카탈로그 v2')
+    expect(metrics.textContent).toContain('아직 기록이 없어요')
+
+    const populated: DailyMetrics = {
+      ...EMPTY_METRICS,
+      achievementHubOpens: 12,
+      achievementsUnlocked: 7,
+      highestLevelReached: 9,
+      cosmeticSelections: 4,
+      profileSteps: [
+        { step: 'choice', count: 11 },
+        { step: 'id', count: 8 },
+        { step: 'pin', count: 6 },
+        { step: 'complete', count: 5 },
+      ],
+    }
+    const filledRoot = new FakeElement('DIV')
+    await new AdminView(filledRoot as unknown as HTMLElement, dashboardApi({
+      metrics: { ok: true, data: populated },
+    })).start()
+    const filled = sectionByHeading(filledRoot, '사용 통계')
+    expect(filled.textContent).toContain('성장 흐름')
+    expect(filled.textContent).toContain('최고 도달 레벨9')
+    expect(filled.textContent).toContain('완료5')
+  })
+
   it('ignores signed-out events while login verification has no dashboard session', () => {
     const view = new AdminView({} as HTMLElement, {} as never)
 

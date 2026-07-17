@@ -1,5 +1,13 @@
 import type { GameEvent, EventSource } from '../progress/events'
 import { isApprovedAnalyticsWeaponId } from '../../supabase/functions/_shared/weapon-ids'
+import {
+  ACHIEVEMENT_CATALOG,
+  availableFrameIds,
+  availableThemeIds,
+} from '../../supabase/functions/_shared/achievement-catalog'
+
+export type AchievementHubLocation = 'hud' | 'notice' | 'profile'
+export type ProfileStep = 'choice' | 'id' | 'pin' | 'complete'
 
 export type AnalyticsEventType =
   | 'visit'
@@ -11,6 +19,11 @@ export type AnalyticsEventType =
   | 'charge_cancel'
   | 'quest_complete'
   | 'share_complete'
+  | 'achievement_hub_opened'
+  | 'achievement_unlocked'
+  | 'level_reached'
+  | 'cosmetic_selected'
+  | 'profile_step_viewed'
 
 export interface AnalyticsPayload {
   eventType: AnalyticsEventType
@@ -18,6 +31,7 @@ export interface AnalyticsPayload {
   installHash: string
   weaponId: string | null
   value: number
+  dimension?: string | null
 }
 
 export interface AnalyticsSupabaseClient {
@@ -51,6 +65,12 @@ const BATCH_CAP = 20
 const FLUSH_INTERVAL_MS = 10_000
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000] as const
 const RECENT_ACTION_CAP = 128
+const HUB_LOCATIONS = new Set<AchievementHubLocation>(['hud', 'notice', 'profile'])
+const PROFILE_STEPS = new Set<ProfileStep>(['choice', 'id', 'pin', 'complete'])
+const COSMETIC_IDS = new Set<string>([
+  ...availableFrameIds(20),
+  ...availableThemeIds(20),
+])
 
 function isPositiveSafeInteger(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0
@@ -249,6 +269,32 @@ export class AnalyticsClient {
     }
   }
 
+  trackAchievementHubOpen(location: AchievementHubLocation | string): void {
+    if (!HUB_LOCATIONS.has(location as AchievementHubLocation)) return
+    this.safeProgressEvent('achievement_hub_opened', location, 1)
+  }
+
+  trackAchievementUnlock(achievementId: string): void {
+    const achievement = ACHIEVEMENT_CATALOG.find(({ id }) => id === achievementId)
+    if (!achievement) return
+    this.safeProgressEvent('achievement_unlocked', achievement.id, achievement.xp)
+  }
+
+  trackLevelReached(level: number): void {
+    if (!Number.isSafeInteger(level) || level < 2 || level > 20) return
+    this.safeProgressEvent('level_reached', `level_${level}`, level)
+  }
+
+  trackCosmeticSelected(cosmeticId: string): void {
+    if (!COSMETIC_IDS.has(cosmeticId)) return
+    this.safeProgressEvent('cosmetic_selected', cosmeticId, 1)
+  }
+
+  trackProfileStep(step: ProfileStep | string): void {
+    if (!PROFILE_STEPS.has(step as ProfileStep)) return
+    this.safeProgressEvent('profile_step_viewed', step, 1)
+  }
+
   clear(): void {
     this.queue.length = 0
   }
@@ -329,15 +375,30 @@ export class AnalyticsClient {
     return true
   }
 
-  private enqueue(eventType: AnalyticsEventType, weaponId: string | null, value: number): void {
+  private safeProgressEvent(eventType: AnalyticsEventType, dimension: string, value: number): void {
+    try {
+      this.enqueue(eventType, null, value, dimension)
+    } catch {
+      // Optional progression analytics never interrupt the visible transition.
+    }
+  }
+
+  private enqueue(
+    eventType: AnalyticsEventType,
+    weaponId: string | null,
+    value: number,
+    dimension?: string,
+  ): void {
     if (!this.isEnabled || !this.installHash) return
-    this.queue.push({
+    const payload: AnalyticsPayload = {
       eventType,
       dayKey: dayKey(this.now()),
       installHash: this.installHash,
       weaponId,
       value,
-    })
+    }
+    if (dimension !== undefined) payload.dimension = dimension
+    this.queue.push(payload)
     if (this.queue.length > QUEUE_CAP) this.queue.splice(0, this.queue.length - QUEUE_CAP)
   }
 

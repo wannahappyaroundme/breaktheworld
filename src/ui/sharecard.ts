@@ -1,11 +1,18 @@
 import { getImage } from '../art/assets'
+import {
+  ACHIEVEMENT_CATALOG,
+  availableFrameIds,
+  availableThemeIds,
+} from '../../supabase/functions/_shared/achievement-catalog'
 
 export interface ShareStats {
   best: number
   total: number
   url: string
   title: string | null
-  stampFrame: boolean
+  frameId: string
+  recordBookThemeId: string
+  level: number
 }
 
 export type ShareResult =
@@ -21,6 +28,20 @@ export const SHARE_CARD_LAYOUT = {
   frame: { x: 6, y: 6, size: 1068, lineWidth: 4 },
 } as const
 
+const FRAME_COLORS: Readonly<Record<string, string>> = {
+  first_crack: '#ffd23f',
+  electric_night: '#61d4ff',
+  coral_burst: '#ff806c',
+  legend_crown: '#ffe27a',
+}
+
+const THEME_COLORS: Readonly<Record<string, readonly [string, string]>> = {
+  default: ['#202c5c', '#0d1326'],
+  electric_night: ['#163e67', '#081527'],
+  coral_burst: ['#713a55', '#24152b'],
+  legend_crown: ['#493d69', '#161329'],
+}
+
 /** Draw the 1080² brag card to a canvas. */
 export function renderCard(s: ShareStats): HTMLCanvasElement {
   const W = SHARE_CARD_LAYOUT.size
@@ -30,10 +51,21 @@ export function renderCard(s: ShareStats): HTMLCanvasElement {
   c.height = H
   const ctx = c.getContext('2d')!
 
+  const availableFrames = availableFrameIds(s.level)
+  const availableThemes = availableThemeIds(s.level)
+  const frameId = availableFrames.includes(s.frameId as never) ? s.frameId : 'default'
+  const themeId = availableThemes.includes(s.recordBookThemeId as never)
+    ? s.recordBookThemeId
+    : 'default'
+  const title = ACHIEVEMENT_CATALOG.some((achievement) => achievement.name === s.title)
+    ? s.title
+    : null
+  const theme = THEME_COLORS[themeId] ?? THEME_COLORS.default
+
   // background
   const g = ctx.createRadialGradient(W * 0.42, H * 0.34, 80, W * 0.5, H * 0.5, W * 0.85)
-  g.addColorStop(0, '#202c5c')
-  g.addColorStop(1, '#0d1326')
+  g.addColorStop(0, theme[0])
+  g.addColorStop(1, theme[1])
   ctx.fillStyle = g
   ctx.fillRect(0, 0, W, H)
   ctx.fillStyle = 'rgba(255,255,255,0.6)'
@@ -72,10 +104,10 @@ export function renderCard(s: ShareStats): HTMLCanvasElement {
   ctx.fillStyle = '#ffd23f'
   ctx.fillText('세상 부수기', W / 2, SHARE_CARD_LAYOUT.mainTitleY)
 
-  if (s.title) {
+  if (title) {
     ctx.fillStyle = '#ffffff'
     ctx.font = '800 44px "Apple SD Gothic Neo","Noto Sans KR",sans-serif'
-    ctx.fillText(s.title, W / 2, SHARE_CARD_LAYOUT.titleY)
+    ctx.fillText(title, W / 2, SHARE_CARD_LAYOUT.titleY)
   }
 
   // stats
@@ -91,9 +123,10 @@ export function renderCard(s: ShareStats): HTMLCanvasElement {
   ctx.fillStyle = 'rgba(255,255,255,0.72)'
   ctx.font = '600 32px sans-serif'
   ctx.fillText(s.url.replace(/^https?:\/\//, ''), W / 2, SHARE_CARD_LAYOUT.urlY)
-  if (s.stampFrame) {
+  const frameColor = FRAME_COLORS[frameId]
+  if (frameColor) {
     const frame = SHARE_CARD_LAYOUT.frame
-    ctx.strokeStyle = '#ffd23f'
+    ctx.strokeStyle = frameColor
     ctx.lineWidth = frame.lineWidth
     ctx.strokeRect(frame.x, frame.y, frame.size, frame.size)
   }

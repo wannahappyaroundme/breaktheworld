@@ -35,6 +35,7 @@ import type {
   ActionResolution,
 } from './combat/action-controller'
 import { GameAnalyticsBridge, type GameAnalyticsSink } from './analytics/game-bridge'
+import { Game } from './game'
 
 class FakeStore implements ProgressPersistence {
   readonly saves: Array<{ state: ProgressStateV1; reason: CheckpointReason }> = []
@@ -633,6 +634,11 @@ describe('GameProgressCoordinator', () => {
       trackChargeRelease: vi.fn(),
       trackChargeCancel: vi.fn(),
       trackQuestComplete: vi.fn(),
+      trackAchievementHubOpen: vi.fn(),
+      trackAchievementUnlock: vi.fn(),
+      trackLevelReached: vi.fn(),
+      trackCosmeticSelected: vi.fn(),
+      trackProfileStep: vi.fn(),
       flushOnPageHide: vi.fn(),
     }
     const analytics = new GameAnalyticsBridge(true)
@@ -1049,5 +1055,136 @@ describe('progress runtime catalogs and fallback copy', () => {
     expect(noticeText).toContain('계속 이어져요')
     expect(noticeText).not.toContain('실패')
     expect(noticeText).not.toContain('—')
+  })
+})
+
+describe('Game progression UI integration', () => {
+  it('derives one progression snapshot for HUD and record book from one state read', () => {
+    const state = stateAtXp(1_250)
+    const unlocked = Object.keys(state.achievements)
+    state.achievements[unlocked[0]].seen = false
+    state.achievements[unlocked[1]].seen = false
+    let stateReads = 0
+    const hud = { setBest: vi.fn(), setProgress: vi.fn() }
+    const recordBook = { render: vi.fn(), setGamificationVisible: vi.fn() }
+    const game = Object.create(Game.prototype) as any
+    game.progress = {
+      get state() { stateReads += 1; return state },
+      questCatalog: targetsCatalog,
+    }
+    game.hud = hud
+    game.recordBook = recordBook
+    game.remoteConfig = { active: { gamification_enabled: true, player_profiles_ui: false } }
+    game.playerAccount = { kind: 'guest', signupEnabled: false, card: { visible: false, kind: 'hidden' } }
+    game.profileCard = () => ({ visible: false, kind: 'hidden' })
+
+    game.refreshProgressUI()
+
+    expect(stateReads).toBe(1)
+    expect(hud.setProgress).toHaveBeenCalledWith({
+      level: 10,
+      xp: 1_250,
+      nextLevelXp: 1_500,
+      ratio: 0,
+      unseen: 2,
+    })
+    expect(recordBook.render.mock.calls[0][0].summary).toMatchObject({
+      level: 10,
+      xp: 1_250,
+      nextLevelXp: 1_500,
+      levelRatio: 0,
+    })
+    expect(recordBook.setGamificationVisible).toHaveBeenCalledWith(true)
+  })
+
+  it('uses the exact accepted transition for HUD gain and telemetry without letting either fail gameplay', () => {
+    const state = createDefaultProgress('game-transition')
+    const analytics = {
+      trackQuestTransition: vi.fn(),
+      trackAchievementUnlock: vi.fn(() => { throw new Error('telemetry unavailable') }),
+      trackLevelReached: vi.fn(),
+    }
+    const game = Object.create(Game.prototype) as any
+    game.progress = { state }
+    game.remoteConfig = {
+      active: { gamification_enabled: true },
+      gamificationFor: vi.fn(() => true),
+    }
+    game.ensureCurrentDay = vi.fn()
+    game.reduceProgress = vi.fn(() => ({
+      accepted: 1,
+      state,
+      unlockedIds: ['first_hit', 'first_destroy'],
+      xpGained: 100,
+      previousLevel: 1,
+      nextLevel: 3,
+    }))
+    game.analytics = analytics
+    game.hud = { showProgressGain: vi.fn(() => { throw new Error('animation unavailable') }), toast: vi.fn() }
+    game.refreshProgressUI = vi.fn()
+
+    expect(() => game.dispatch([actionEvents()[0]], 'actionEnd')).not.toThrow()
+    expect(analytics.trackAchievementUnlock).toHaveBeenCalledWith(['first_hit', 'first_destroy'])
+    expect(analytics.trackLevelReached.mock.calls).toEqual([[2], [3]])
+    expect(game.hud.showProgressGain).toHaveBeenCalledWith({ xp: 100, levelUp: 3 })
+    expect(game.refreshProgressUI).toHaveBeenCalledOnce()
+  })
+
+  it('keeps progression UI and telemetry silent when the gamification gate is closed', () => {
+    const state = createDefaultProgress('closed-game-ui')
+    const game = Object.create(Game.prototype) as any
+    game.progress = { state, questCatalog: targetsCatalog }
+    game.remoteConfig = {
+      active: { gamification_enabled: false, player_profiles_ui: false },
+      gamificationFor: vi.fn(() => false),
+    }
+    game.playerAccount = { kind: 'guest', signupEnabled: false, card: { visible: false, kind: 'hidden' } }
+    game.hud = { setBest: vi.fn(), setProgress: vi.fn(), showProgressGain: vi.fn(), toast: vi.fn() }
+    game.recordBook = { render: vi.fn(), setGamificationVisible: vi.fn() }
+    game.analytics = {
+      trackQuestTransition: vi.fn(), trackAchievementUnlock: vi.fn(), trackLevelReached: vi.fn(),
+      trackProfileStep: vi.fn(),
+    }
+    game.profileCard = () => ({ visible: false, kind: 'hidden' })
+    game.ensureCurrentDay = vi.fn()
+    game.reduceProgress = vi.fn(() => ({
+      accepted: 1, state, unlockedIds: [], xpGained: 0, previousLevel: 1, nextLevel: 1,
+    }))
+
+    game.refreshProgressUI()
+    game.dispatch([actionEvents()[0]], 'actionEnd')
+    game.trackProfileStep('choice')
+
+    expect(game.hud.setProgress).not.toHaveBeenCalled()
+    expect(game.hud.showProgressGain).not.toHaveBeenCalled()
+    expect(game.analytics.trackAchievementUnlock).not.toHaveBeenCalled()
+    expect(game.analytics.trackLevelReached).not.toHaveBeenCalled()
+    expect(game.analytics.trackProfileStep).not.toHaveBeenCalled()
+    expect(state).toEqual(createDefaultProgress('closed-game-ui'))
+  })
+
+  it('persists only accepted frame/theme selections and reports their ID after state changes', () => {
+    const selectFrame = vi.fn()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+    const selectRecordBookTheme = vi.fn()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+    const game = Object.create(Game.prototype) as any
+    game.remoteConfig = { active: { gamification_enabled: true } }
+    game.progress = { selectFrame, selectRecordBookTheme }
+    game.analytics = { trackCosmeticSelected: vi.fn() }
+    game.refreshProgressUI = vi.fn()
+
+    game.selectFrame('first_crack')
+    game.selectFrame('first_crack')
+    game.selectTheme('electric_night')
+    game.selectTheme('electric_night')
+
+    expect(game.analytics.trackCosmeticSelected.mock.calls).toEqual([
+      ['first_crack'],
+      ['electric_night'],
+    ])
+    expect(game.refreshProgressUI).toHaveBeenCalledTimes(2)
   })
 })

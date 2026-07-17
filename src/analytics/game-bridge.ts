@@ -1,4 +1,5 @@
 import type { EventSource, GameEvent } from '../progress/events'
+import type { AchievementHubLocation, ProfileStep } from './client'
 
 export interface GameAnalyticsSink {
   track(event: GameEvent): void | Promise<void>
@@ -6,6 +7,11 @@ export interface GameAnalyticsSink {
   trackChargeRelease(weaponId: string, source: EventSource): void
   trackChargeCancel(weaponId: string, source: EventSource): void
   trackQuestComplete(source: EventSource): void
+  trackAchievementHubOpen(location: AchievementHubLocation): void | Promise<void>
+  trackAchievementUnlock(achievementId: string): void | Promise<void>
+  trackLevelReached(level: number): void | Promise<void>
+  trackCosmeticSelected(cosmeticId: string): void | Promise<void>
+  trackProfileStep(step: ProfileStep): void | Promise<void>
   flushOnPageHide(): void
 }
 
@@ -14,6 +20,11 @@ type PendingDescriptor =
   | { kind: 'chargeRelease'; weaponId: string }
   | { kind: 'chargeCancel'; weaponId: string }
   | { kind: 'questComplete' }
+  | { kind: 'hubOpen'; location: AchievementHubLocation }
+  | { kind: 'achievementUnlock'; achievementId: string }
+  | { kind: 'levelReached'; level: number }
+  | { kind: 'cosmeticSelected'; cosmeticId: string }
+  | { kind: 'profileStep'; step: ProfileStep }
 
 const PRE_READY_CAP = 100
 
@@ -69,6 +80,28 @@ export class GameAnalyticsBridge {
     this.emit({ kind: 'questComplete' })
   }
 
+  trackAchievementHubOpen(location: AchievementHubLocation): void {
+    this.emit({ kind: 'hubOpen', location })
+  }
+
+  trackAchievementUnlock(achievementIds: readonly string[]): void {
+    for (const achievementId of achievementIds) {
+      this.emit({ kind: 'achievementUnlock', achievementId })
+    }
+  }
+
+  trackLevelReached(level: number): void {
+    this.emit({ kind: 'levelReached', level })
+  }
+
+  trackCosmeticSelected(cosmeticId: string): void {
+    this.emit({ kind: 'cosmeticSelected', cosmeticId })
+  }
+
+  trackProfileStep(step: ProfileStep): void {
+    this.emit({ kind: 'profileStep', step })
+  }
+
   flushOnPageHide(): void {
     this.call(() => this.sink?.flushOnPageHide())
   }
@@ -104,6 +137,21 @@ export class GameAnalyticsBridge {
         return
       case 'questComplete':
         this.call(() => sink.trackQuestComplete('user'))
+        return
+      case 'hubOpen':
+        this.call(() => sink.trackAchievementHubOpen(descriptor.location))
+        return
+      case 'achievementUnlock':
+        this.call(() => sink.trackAchievementUnlock(descriptor.achievementId))
+        return
+      case 'levelReached':
+        this.call(() => sink.trackLevelReached(descriptor.level))
+        return
+      case 'cosmeticSelected':
+        this.call(() => sink.trackCosmeticSelected(descriptor.cosmeticId))
+        return
+      case 'profileStep':
+        this.call(() => sink.trackProfileStep(descriptor.step))
     }
   }
 

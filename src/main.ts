@@ -162,6 +162,7 @@ preloadAssets(import.meta.env.BASE_URL).finally(() => {
     onClosed: () => {
       if (startupReady) finishStartup()
     },
+    onProfileStepViewed: (step) => game.trackProfileStep(step),
   })
   if (!guestRememberedAtBoot) profileView.openRequired('checking')
   const restorePromise = controller.start()

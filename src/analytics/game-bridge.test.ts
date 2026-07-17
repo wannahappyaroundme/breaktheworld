@@ -10,6 +10,11 @@ function sink(overrides: Partial<GameAnalyticsSink> = {}): GameAnalyticsSink {
     trackChargeRelease: vi.fn(),
     trackChargeCancel: vi.fn(),
     trackQuestComplete: vi.fn(),
+    trackAchievementHubOpen: vi.fn(),
+    trackAchievementUnlock: vi.fn(),
+    trackLevelReached: vi.fn(),
+    trackCosmeticSelected: vi.fn(),
+    trackProfileStep: vi.fn(),
     flushOnPageHide: vi.fn(),
     ...overrides,
   }
@@ -26,6 +31,28 @@ const used = (
 })
 
 describe('GameAnalyticsBridge', () => {
+  it('forwards exact progression transitions and isolates a failing optional sink', () => {
+    const target = sink({
+      trackAchievementUnlock: vi.fn(() => { throw new Error('optional telemetry unavailable') }),
+    })
+    const bridge = new GameAnalyticsBridge(true)
+    bridge.attach(target)
+
+    expect(() => {
+      bridge.trackAchievementHubOpen('notice')
+      bridge.trackAchievementUnlock(['first_hit', 'first_destroy'])
+      bridge.trackLevelReached(4)
+      bridge.trackCosmeticSelected('first_crack')
+      bridge.trackProfileStep('choice')
+    }).not.toThrow()
+
+    expect(target.trackAchievementHubOpen).toHaveBeenCalledWith('notice')
+    expect(target.trackAchievementUnlock).toHaveBeenCalledTimes(2)
+    expect(target.trackLevelReached).toHaveBeenCalledWith(4)
+    expect(target.trackCosmeticSelected).toHaveBeenCalledWith('first_crack')
+    expect(target.trackProfileStep).toHaveBeenCalledWith('choice')
+  })
+
   it('forwards only accepted user gameplay events and ignores demo/system/settings inputs', () => {
     const target = sink()
     const bridge = new GameAnalyticsBridge(true)

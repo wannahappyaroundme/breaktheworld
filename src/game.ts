@@ -36,7 +36,7 @@ import {
 import { BUILT_IN_CATALOG } from './progress/catalog'
 import { kstDayKey } from './progress/day'
 import type { EventSource, GameEvent } from './progress/events'
-import type { ProgressStateV1 } from './progress/types'
+import type { ProfileFrameId, ProgressStateV1, RecordBookThemeId } from './progress/types'
 import {
   ProgressStore,
   progressStorageKey,
@@ -57,6 +57,7 @@ import type {
 } from './config/quest-provider'
 import {
   AnalyticsClient,
+  type ProfileStep,
   type AnalyticsSupabaseClient,
 } from './analytics/client'
 import { GameAnalyticsBridge } from './analytics/game-bridge'
@@ -131,6 +132,12 @@ export class Game {
   private progressScopeRevision = 0
   private playerAccount: PlayerAccountSnapshot = HIDDEN_PLAYER_ACCOUNT
   private analyticsInstallSeed = ''
+  private shareProgress = {
+    selectedTitle: null as string | null,
+    frameId: 'default' as ProfileFrameId,
+    recordBookThemeId: 'default' as RecordBookThemeId,
+    level: 1,
+  }
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -217,6 +224,8 @@ export class Game {
         onSkinChange: (characterId, skinId) => {
           if (this.progress.selectSkin(characterId, skinId)) this.refreshProgressUI()
         },
+        onFrameChange: (frameId) => this.selectFrame(frameId),
+        onThemeChange: (themeId) => this.selectTheme(themeId),
         onSettingChange: (change) => this.changeSetting(change),
         onOpenProfile: (trigger) => this.options.onOpenProfile?.(trigger),
         onClose: () => {
@@ -396,6 +405,7 @@ export class Game {
     if (events.some((event) => event.type === 'SETTING_CHANGED' || event.source === 'user')) {
       this.ensureCurrentDay()
     }
+    const progressionEnabled = this.gamificationFor(events)
     const previousTotal = this.progress.state.lifetime.totalTargets
     const previousQuestCompletedAt = this.progress.state.daily.completedAt
     const result = this.reduceProgress(events, reason)
@@ -406,6 +416,22 @@ export class Game {
       'user',
       result.accepted > 0
     )
+    if (progressionEnabled) {
+      try { this.analytics.trackAchievementUnlock(result.unlockedIds) } catch { /* optional */ }
+      for (let level = result.previousLevel + 1; level <= result.nextLevel; level += 1) {
+        try { this.analytics.trackLevelReached(level) } catch { /* optional */ }
+      }
+      if (result.xpGained > 0) {
+        try {
+          this.hud.showProgressGain({
+            xp: result.xpGained,
+            levelUp: result.nextLevel > result.previousLevel ? result.nextLevel : null,
+          })
+        } catch {
+          // Progress animation is decorative and cannot block state/UI refresh.
+        }
+      }
+    }
     this.refreshProgressUI()
     if (
       this.progress.state.lifetime.totalTargets > previousTotal
@@ -422,8 +448,8 @@ export class Game {
     })
   }
 
-  private settingsState(): RecordBookSettingsState {
-    const profile = this.progress.state.profile
+  private settingsState(state: ProgressStateV1 = this.progress.state): RecordBookSettingsState {
+    const profile = state.profile
     return {
       strongInput: profile.strongInput,
       reducedMotion: profile.reducedMotion,
@@ -475,12 +501,27 @@ export class Game {
   }
 
   private refreshProgressUI(): void {
-    this.best = this.progress.state.lifetime.bestCombo
-    this.totalTargets = this.progress.state.lifetime.totalTargets
+    const state = this.progress.state
+    const view = makeRecordBookView(state, this.progress.questCatalog)
+    this.shareProgress = {
+      ...view.profile,
+      level: view.summary.level,
+    }
+    this.best = state.lifetime.bestCombo
+    this.totalTargets = state.lifetime.totalTargets
     this.hud.setBest(this.best)
+    if (this.remoteConfig.active.gamification_enabled) {
+      this.hud.setProgress({
+        level: view.summary.level,
+        xp: view.summary.xp,
+        nextLevelXp: view.summary.nextLevelXp,
+        ratio: view.summary.levelRatio,
+        unseen: view.achievements.items.filter(({ complete, seen }) => complete && !seen).length,
+      })
+    }
     this.recordBook.render(
-      makeRecordBookView(this.progress.state, this.progress.questCatalog),
-      this.settingsState(),
+      view,
+      this.settingsState(state),
       this.profileCard(),
     )
     this.applyGamificationVisibility()
@@ -539,6 +580,26 @@ export class Game {
     if (change.key === 'reducedMotion') this.applyMotionSetting()
     this.refreshProgressUI()
     this.applyPendingRemoteConfig()
+  }
+
+  private selectFrame(frameId: ProfileFrameId): void {
+    if (!this.remoteConfig.active.gamification_enabled) return
+    if (!this.progress.selectFrame(frameId)) return
+    try { this.analytics.trackCosmeticSelected(frameId) } catch { /* optional */ }
+    this.refreshProgressUI()
+  }
+
+  private selectTheme(themeId: RecordBookThemeId): void {
+    if (!this.remoteConfig.active.gamification_enabled) return
+    if (!this.progress.selectRecordBookTheme(themeId)) return
+    try { this.analytics.trackCosmeticSelected(themeId) } catch { /* optional */ }
+    this.refreshProgressUI()
+  }
+
+  /** Enum-only profile funnel boundary; profile rendering stays independent of analytics. */
+  trackProfileStep(step: ProfileStep): void {
+    if (!this.remoteConfig.active.gamification_enabled) return
+    try { this.analytics.trackProfileStep(step) } catch { /* optional */ }
   }
 
   private effectiveReducedMotion(): boolean {
@@ -827,24 +888,26 @@ export class Game {
   private onOpenRecordBook = (): void => {
     this.refreshProgressUI()
     this.recordBook.open()
+    if (this.remoteConfig.active.gamification_enabled) {
+      try { this.analytics.trackAchievementHubOpen('hud') } catch { /* optional */ }
+    }
   }
 
   private onShare = (): void => {
     this.audio.unlock()
     this.hud.toast('📸 카드 만드는 중…')
+    const visibleProfile = this.remoteConfig.active.gamification_enabled
+      ? this.shareProgress
+      : { selectedTitle: null, frameId: 'default' as const, recordBookThemeId: 'default' as const }
     void shareCard(
       {
         best: this.best,
         total: this.totalTargets,
         url: location.href.split('?')[0],
-        title: this.progress.state.profile.selectedTitle,
-        stampFrame: (
-          this.remoteConfig.active.gamification_enabled
-          && (
-            this.progress.state.lifetime.stamps > 0
-            || Object.keys(this.progress.state.achievements).length > 0
-          )
-        ),
+        title: visibleProfile.selectedTitle,
+        frameId: visibleProfile.frameId,
+        recordBookThemeId: visibleProfile.recordBookThemeId,
+        level: this.remoteConfig.active.gamification_enabled ? this.shareProgress.level : 1,
       },
       (m) => this.hud.toast(m)
     ).then((result) => {

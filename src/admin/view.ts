@@ -13,6 +13,7 @@ import {
 } from './api'
 import { isCharacterId, type CharacterId } from '../weapons/character-ids'
 import type { ManagedPlayer } from '../player/admin-contract'
+import { ACHIEVEMENT_CATALOG_VERSION } from '../progress/catalog'
 
 type MetricFormat = 'number' | 'percent'
 
@@ -462,6 +463,38 @@ export class AdminView {
       grid.append(item)
     }
     body.append(grid)
+    body.append(text('h3', '성장 흐름'))
+    body.append(text('p', `업적 카탈로그 v${ACHIEVEMENT_CATALOG_VERSION}`, 'admin-metric-note'))
+    const hasGrowth = metrics.achievementHubOpens > 0
+      || metrics.achievementsUnlocked > 0
+      || metrics.highestLevelReached !== null
+      || metrics.cosmeticSelections > 0
+      || metrics.profileSteps.some(({ count }) => count > 0)
+    if (!hasGrowth) {
+      body.append(text('p', '아직 기록이 없어요', 'admin-empty admin-empty--small'))
+    } else {
+      const growth = element('dl', 'admin-metrics admin-growth-metrics')
+      const growthValues: Array<[string, string]> = [
+        ['기록책 열기', formatMetricValue(metrics.achievementHubOpens)],
+        ['업적 달성', formatMetricValue(metrics.achievementsUnlocked)],
+        ['최고 도달 레벨', formatMetricValue(metrics.highestLevelReached)],
+        ['꾸미기 선택', formatMetricValue(metrics.cosmeticSelections)],
+      ]
+      for (const [label, value] of growthValues) {
+        const item = element('div', 'admin-metric')
+        item.append(text('dt', label), text('dd', value))
+        growth.append(item)
+      }
+      body.append(growth)
+      const stepLabels = { choice: '시작 선택', id: 'ID', pin: 'PIN', complete: '완료' } as const
+      const steps = element('ul', 'admin-usage-list admin-growth-steps')
+      for (const { step, count } of metrics.profileSteps) {
+        const item = element('li')
+        item.append(text('span', stepLabels[step]), text('strong', formatMetricValue(count)))
+        steps.append(item)
+      }
+      body.append(steps)
+    }
     const usageTitle = text('h3', '캐릭터별 사용 수')
     body.append(usageTitle)
     if (metrics.characterUses.length === 0) {

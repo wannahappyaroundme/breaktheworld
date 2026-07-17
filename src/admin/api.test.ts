@@ -268,6 +268,11 @@ describe('AdminApi operations', () => {
       { day_key: '2026-07-16', event_type: 'weapon_use', weapon_id: 'cat', event_count: 3, value_sum: 3, average_value: 1 },
       { day_key: '2026-07-16', event_type: 'target_finish_actions', weapon_id: null, event_count: 2, value_sum: 5, average_value: 2.5 },
       { day_key: '2026-07-16', event_type: 'weapon_use', weapon_id: 'hammer', event_count: 9, value_sum: 9, average_value: 1 },
+      { day_key: '2026-07-16', event_type: 'achievement_hub_opened', weapon_id: null, dimension: 'hud', event_count: 4, value_sum: 4, average_value: 1 },
+      { day_key: '2026-07-16', event_type: 'achievement_unlocked', weapon_id: null, dimension: 'first_hit', event_count: 2, value_sum: 100, average_value: 50 },
+      { day_key: '2026-07-16', event_type: 'level_reached', weapon_id: null, dimension: 'level_7', event_count: 1, value_sum: 7, average_value: 7 },
+      { day_key: '2026-07-16', event_type: 'cosmetic_selected', weapon_id: null, dimension: 'electric_night', event_count: 3, value_sum: 3, average_value: 1 },
+      { day_key: '2026-07-16', event_type: 'profile_step_viewed', weapon_id: null, dimension: 'pin', event_count: 5, value_sum: 5, average_value: 1 },
       { day_key: '2026-07-15', event_type: 'visit', weapon_id: null, event_count: 100, value_sum: 100, average_value: 1 },
       { day_key: '2026-07-15', event_type: 'weapon_use', weapon_id: 'cat', event_count: 30, value_sum: 30, average_value: 1 },
     ]
@@ -275,9 +280,47 @@ describe('AdminApi operations', () => {
 
     await expect(api.loadDailyMetrics()).resolves.toMatchObject({
       ok: true,
-      data: { visits: 12, chargeCompletionRate: 80, characterUses: [{ weaponId: 'cat', count: 3 }], averageFinishActions: 2.5 },
+      data: {
+        visits: 12,
+        chargeCompletionRate: 80,
+        characterUses: [{ weaponId: 'cat', count: 3 }],
+        averageFinishActions: 2.5,
+        achievementHubOpens: 4,
+        achievementsUnlocked: 2,
+        highestLevelReached: 7,
+        cosmeticSelections: 3,
+        profileSteps: [
+          { step: 'choice', count: 0 },
+          { step: 'id', count: 0 },
+          { step: 'pin', count: 5 },
+          { step: 'complete', count: 0 },
+        ],
+      },
     })
-    expect(calls).toContain('analytics_daily:select:day_key,event_type,weapon_id,event_count,value_sum,average_value')
+    expect(calls).toContain('analytics_daily:select:day_key,event_type,weapon_id,dimension,event_count,value_sum,average_value')
+  })
+
+  it('defaults missing progression dimensions without inventing a level', async () => {
+    const { api } = client({ responses: [{ data: [{
+      day_key: '2026-07-16', event_type: 'visit', weapon_id: null,
+      event_count: '1', value_sum: '1', average_value: null,
+    }], error: null }] })
+
+    await expect(api.loadDailyMetrics()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        achievementHubOpens: 0,
+        achievementsUnlocked: 0,
+        highestLevelReached: null,
+        cosmeticSelections: 0,
+        profileSteps: [
+          { step: 'choice', count: 0 },
+          { step: 'id', count: 0 },
+          { step: 'pin', count: 0 },
+          { step: 'complete', count: 0 },
+        ],
+      },
+    })
   })
 
   it('uses the authenticated owner function for account list and status changes', async () => {

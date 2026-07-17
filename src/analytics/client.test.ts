@@ -95,6 +95,32 @@ function sentPayloads(invoke: Mock<any[], any>): AnalyticsPayload[] {
 }
 
 describe('AnalyticsClient privacy and mapping', () => {
+  it('maps the five progression events to exact allowlisted dimensions only', async () => {
+    const { create, invoke } = harness()
+    const client = await create()
+    await client.flush()
+    invoke.mockClear()
+
+    client.trackAchievementHubOpen('profile')
+    client.trackAchievementUnlock('first_hit')
+    client.trackLevelReached(7)
+    client.trackCosmeticSelected('electric_night')
+    client.trackProfileStep('pin')
+    client.trackAchievementUnlock('raw player name')
+    client.trackLevelReached(21)
+    client.trackCosmeticSelected('unknown')
+    client.trackProfileStep('profile-id-from-user')
+    await client.flush()
+
+    expect(sentPayloads(invoke)).toEqual([
+      expect.objectContaining({ eventType: 'achievement_hub_opened', weaponId: null, dimension: 'profile', value: 1 }),
+      expect.objectContaining({ eventType: 'achievement_unlocked', weaponId: null, dimension: 'first_hit', value: 50 }),
+      expect.objectContaining({ eventType: 'level_reached', weaponId: null, dimension: 'level_7', value: 7 }),
+      expect.objectContaining({ eventType: 'cosmetic_selected', weaponId: null, dimension: 'electric_night', value: 1 }),
+      expect.objectContaining({ eventType: 'profile_step_viewed', weaponId: null, dimension: 'pin', value: 1 }),
+    ])
+  })
+
   it('hashes the install seed before queueing and never sends the raw seed', async () => {
     const { create, invoke } = harness()
     const client = await create()

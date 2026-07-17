@@ -81,12 +81,15 @@ describe('ingest analytics function contract', () => {
   })
 
   it('accepts only approved hub, level, cosmetic, and profile-step combinations', () => {
+    const hubLocations = ['hud', 'notice', 'profile'] as const
+    const levels = Array.from({ length: 19 }, (_, index) => index + 2)
+    const cosmeticIds = [...new Set([...availableFrameIds(20), ...availableThemeIds(20)])]
+    const profileSteps = ['choice', 'id', 'pin', 'complete'] as const
     const approved = [
-      { eventType: 'achievement_hub_opened', dimension: 'hud', value: 1 },
-      { eventType: 'level_reached', dimension: 'level_20', value: 20 },
-      ...[...new Set([...availableFrameIds(20), ...availableThemeIds(20)])]
-        .map((dimension) => ({ eventType: 'cosmetic_selected', dimension, value: 1 })),
-      { eventType: 'profile_step_viewed', dimension: 'complete', value: 1 },
+      ...hubLocations.map((dimension) => ({ eventType: 'achievement_hub_opened', dimension, value: 1 })),
+      ...levels.map((level) => ({ eventType: 'level_reached', dimension: `level_${level}`, value: level })),
+      ...cosmeticIds.map((dimension) => ({ eventType: 'cosmetic_selected', dimension, value: 1 })),
+      ...profileSteps.map((dimension) => ({ eventType: 'profile_step_viewed', dimension, value: 1 })),
     ]
     for (const progressEvent of approved) {
       expect(validateAnalyticsBatch([{
@@ -95,6 +98,16 @@ describe('ingest analytics function contract', () => {
         weaponId: null,
       }]).ok).toBe(true)
     }
+    expect(hubLocations).toHaveLength(3)
+    expect(levels).toEqual(Array.from({ length: 19 }, (_, index) => index + 2))
+    expect(cosmeticIds.sort()).toEqual([
+      'coral_burst',
+      'default',
+      'electric_night',
+      'first_crack',
+      'legend_crown',
+    ])
+    expect(profileSteps).toHaveLength(4)
     expect(validateAnalyticsBatch([{
       ...valid,
       eventType: 'level_reached',

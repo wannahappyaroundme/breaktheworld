@@ -67,6 +67,7 @@ interface AnalyticsRow {
   day_key: string
   event_type: string
   weapon_id: string | null
+  dimension?: string | null
   event_count: number | string
   value_sum: number | string
   average_value: number | string | null
@@ -81,6 +82,14 @@ export interface DailyMetrics {
   sharesCompleted: number
   characterUses: Array<{ weaponId: string; count: number }>
   averageFinishActions: number | null
+  achievementHubOpens: number
+  achievementsUnlocked: number
+  highestLevelReached: number | null
+  cosmeticSelections: number
+  profileSteps: Array<{
+    step: 'choice' | 'id' | 'pin' | 'complete'
+    count: number
+  }>
 }
 
 export interface ManagedAdmin {
@@ -94,7 +103,7 @@ type MutationFeedback = (event: string) => void | Promise<void>
 
 const QUEST_COLUMNS = 'id,copy,event_type,target,active_from,active_to,enabled,version,updated_at'
 const FLAG_COLUMNS = 'key,enabled,updated_at'
-const METRIC_COLUMNS = 'day_key,event_type,weapon_id,event_count,value_sum,average_value'
+const METRIC_COLUMNS = 'day_key,event_type,weapon_id,dimension,event_count,value_sum,average_value'
 const EVENT_TYPES: readonly QuestEventType[] = ['CHARGE_RELEASED', 'WEAPON_USED', 'TARGET_DESTROYED']
 const FLAG_KEYS: readonly FeatureFlagKey[] = [
   'gamification_enabled',
@@ -310,6 +319,17 @@ export class AdminApi {
         map.set(row.weapon_id!, (map.get(row.weapon_id!) ?? 0) + finite(row.event_count))
         return map
       }, new Map())
+    const reachedLevels = rows
+      .filter((row) => row.event_type === 'level_reached')
+      .map((row) => /^level_(\d{1,2})$/.exec(row.dimension ?? ''))
+      .map((match) => match ? Number(match[1]) : 0)
+      .filter((level) => Number.isSafeInteger(level) && level >= 2 && level <= 20)
+    const profileSteps = (['choice', 'id', 'pin', 'complete'] as const).map((step) => ({
+      step,
+      count: rows
+        .filter((row) => row.event_type === 'profile_step_viewed' && row.dimension === step)
+        .reduce((sum, row) => sum + finite(row.event_count), 0),
+    }))
     return {
       ok: true,
       data: {
@@ -322,6 +342,11 @@ export class AdminApi {
         characterUses: [...characterUses].map(([weaponId, uses]) => ({ weaponId, count: uses }))
           .sort((a, b) => b.count - a.count || a.weaponId.localeCompare(b.weaponId)),
         averageFinishActions: finishCount === 0 ? null : Math.round((finishValue / finishCount) * 10) / 10,
+        achievementHubOpens: count('achievement_hub_opened'),
+        achievementsUnlocked: count('achievement_unlocked'),
+        highestLevelReached: reachedLevels.length === 0 ? null : Math.max(...reachedLevels),
+        cosmeticSelections: count('cosmetic_selected'),
+        profileSteps,
       },
     }
   }

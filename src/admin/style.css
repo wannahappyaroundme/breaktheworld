@@ -616,6 +616,16 @@ select:focus-visible {
   font-weight: 800;
 }
 
+.admin-metric-note {
+  margin: -0.35rem 0 0.75rem;
+  color: #aebbd8;
+  font-size: 0.82rem;
+}
+
+.admin-growth-steps {
+  margin-bottom: 1.25rem;
+}
+
 .admin-card__body h3 {
   margin: 22px 0 12px;
   color: #eef2ff;

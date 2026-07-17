@@ -183,6 +183,7 @@ function setup(
     onLoggedOut?: () => void
     onClosed?: () => void
     checkNameResult?: PlayerApiResult<boolean>
+    onProfileStepViewed?: (step: 'choice' | 'id' | 'pin' | 'complete') => void | Promise<void>
   } = {},
 ) {
   const doc = new FakeDocument()
@@ -250,6 +251,7 @@ function setup(
     onAuthenticated: options.onAuthenticated,
     onLoggedOut: options.onLoggedOut,
     onClosed: options.onClosed,
+    onProfileStepViewed: options.onProfileStepViewed,
   })
   view.render(snapshot)
   return { doc, ui, recordBook, controller, view, history, fakeWindow }
@@ -275,6 +277,64 @@ beforeEach(() => { vi.useRealTimers() })
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('PlayerProfileView', () => {
+  it('tracks each actual create step once and never counts login as create completion', async () => {
+    const onProfileStepViewed = vi.fn()
+    const { ui, controller, view } = setup(guest(), { onProfileStepViewed })
+
+    view.openRequired('choice')
+    view.render(guest())
+    expect(onProfileStepViewed.mock.calls).toEqual([['choice']])
+    action(ui, 'create-start').click()
+    expect(onProfileStepViewed.mock.calls).toEqual([['choice'], ['id']])
+    const id = ui.querySelector('[data-player-field="profile-name"]')!
+    id.value = '예진'
+    id.dispatch('input')
+    action(ui, 'check-name').click()
+    await flushAsync()
+    view.render(guest())
+    expect(onProfileStepViewed.mock.calls).toEqual([['choice'], ['id'], ['pin']])
+    const pin = ui.querySelector('[data-player-field="pin"]')!
+    const confirmation = ui.querySelector('[data-player-field="pin-confirmation"]')!
+    const age = ui.querySelector('[data-player-field="over14"]')!
+    pin.value = '123456'
+    confirmation.value = '123456'
+    age.checked = true
+    pin.dispatch('input')
+    confirmation.dispatch('input')
+    age.dispatch('change')
+    action(ui, 'create-submit').click()
+    await flushAsync()
+    expect(controller.create).toHaveBeenCalledOnce()
+    expect(onProfileStepViewed.mock.calls).toEqual([['choice'], ['id'], ['pin'], ['complete']])
+
+    const loginSteps = vi.fn()
+    const login = setup(guest(), { onProfileStepViewed: loginSteps })
+    login.view.open(null)
+    action(login.ui, 'login-start').click()
+    const name = login.ui.querySelector('[data-player-field="profile-name"]')!
+    const loginPin = login.ui.querySelector('[data-player-field="pin"]')!
+    name.value = '예진'
+    loginPin.value = '123456'
+    name.dispatch('input')
+    loginPin.dispatch('input')
+    action(login.ui, 'login-submit').click()
+    await flushAsync()
+    expect(loginSteps).not.toHaveBeenCalledWith('complete')
+  })
+
+  it('isolates throwing and rejecting profile-step telemetry callbacks', async () => {
+    const callback = vi.fn((step: 'choice' | 'id' | 'pin' | 'complete') => {
+      if (step === 'choice') throw new Error('telemetry unavailable')
+      return Promise.reject(new Error('telemetry unavailable'))
+    })
+    const { ui, view } = setup(guest(), { onProfileStepViewed: callback })
+
+    expect(() => view.openRequired('choice')).not.toThrow()
+    action(ui, 'create-start').click()
+    await flushAsync()
+    expect(ui.textContent).toContain('새 프로필 만들기')
+  })
+
   it('shows the approved first choice before play and cannot be dismissed', () => {
     const onGuestChosen = vi.fn()
     const { doc, ui, recordBook, view, fakeWindow } = setup(guest(), { onGuestChosen })

@@ -7,6 +7,7 @@ import './style.css'
 
 type ProfileScreen = 'starting' | 'guest' | 'create' | 'login' | 'signed' | 'force'
 type RequiredEntryScreen = 'checking' | 'choice'
+export type ProfileProgressStep = 'choice' | 'id' | 'pin' | 'complete'
 
 type ControllerPort = Pick<
   PlayerAccountController,
@@ -27,6 +28,7 @@ export interface PlayerProfileViewOptions {
   onAuthenticated?: () => void
   onLoggedOut?: () => void
   onClosed?: () => void
+  onProfileStepViewed?: (step: ProfileProgressStep) => void | Promise<void>
 }
 
 interface InertState {
@@ -68,6 +70,7 @@ export class PlayerProfileView {
   private readonly onAuthenticated?: PlayerProfileViewOptions['onAuthenticated']
   private readonly onLoggedOut?: PlayerProfileViewOptions['onLoggedOut']
   private readonly onClosed?: PlayerProfileViewOptions['onClosed']
+  private readonly onProfileStepViewed?: PlayerProfileViewOptions['onProfileStepViewed']
   private snapshot: PlayerAccountSnapshot
   private screen: ProfileScreen = 'guest'
   private openState = false
@@ -83,6 +86,7 @@ export class PlayerProfileView {
   private forceForm = { pin: '', confirmation: '', showPin: false }
   private privacyExpanded = false
   private logoutPending = false
+  private visibleProfileStep: ProfileProgressStep | null = null
 
   constructor(
     private readonly parent: HTMLElement,
@@ -97,6 +101,7 @@ export class PlayerProfileView {
     this.onAuthenticated = options.onAuthenticated
     this.onLoggedOut = options.onLoggedOut
     this.onClosed = options.onClosed
+    this.onProfileStepViewed = options.onProfileStepViewed
 
     this.layer = this.doc.createElement('div')
     this.layer.className = 'player-profile-layer'
@@ -231,6 +236,9 @@ export class PlayerProfileView {
     this.closeButton.hidden = this.isBlocking()
     this.closeButton.disabled = this.isBlocking()
     this.live.textContent = this.error
+    if (this.screen === 'starting' || this.screen === 'login' || this.screen === 'signed' || this.screen === 'force') {
+      this.visibleProfileStep = null
+    }
     switch (this.screen) {
       case 'starting': this.renderStarting(); break
       case 'guest': this.renderGuest(); break
@@ -306,6 +314,7 @@ export class PlayerProfileView {
     )
     if (!this.requiredEntry) {
       this.body.replaceChildren(intro, create, login, note)
+      this.visibleProfileStep = null
       return
     }
     const guest = this.choiceCard(
@@ -319,6 +328,7 @@ export class PlayerProfileView {
       this.onGuestChosen?.()
     })
     this.body.replaceChildren(intro, create, login, guest)
+    this.trackProfileStep('choice')
   }
 
   private renderCreate(): void {
@@ -431,11 +441,15 @@ export class PlayerProfileView {
       )
       this.busy = false
       this.error = exactError(result)
-      if (result.ok) this.finishAuthentication()
+      if (result.ok) {
+        this.finishAuthentication()
+        this.trackProfileStep('complete')
+      }
       else this.paint()
     })
     form.append(steps, name.label, check, checkState, advanced)
     this.body.replaceChildren(back, form)
+    this.trackProfileStep(available ? 'pin' : 'id')
   }
 
   private renderLogin(): void {
@@ -781,6 +795,19 @@ export class PlayerProfileView {
       this.close()
     }
     this.onAuthenticated?.()
+  }
+
+  private trackProfileStep(step: ProfileProgressStep): void {
+    if (this.visibleProfileStep === step) return
+    this.visibleProfileStep = step
+    try {
+      const pending = this.onProfileStepViewed?.(step)
+      if (pending && typeof (pending as PromiseLike<unknown>).then === 'function') {
+        void Promise.resolve(pending).catch(() => undefined)
+      }
+    } catch {
+      // Optional enum-only telemetry cannot affect profile navigation or auth.
+    }
   }
 
   private makeSiblingsInert(): void {
