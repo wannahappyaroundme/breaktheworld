@@ -42,7 +42,7 @@
   min-width: 0;
   margin: auto;
   padding: clamp(16px, 4.5vw, 24px);
-  overflow: hidden;
+  overflow: clip;
   background: var(--paper-warm);
   color: var(--ink-text);
   border: 3px solid var(--night-ink);

@@ -758,10 +758,12 @@ describe('PlayerProfileView', () => {
     }>('node:fs')
     const css = readFileSync(new URL('./style.css', import.meta.url), 'utf8')
     const html = readFileSync(new URL('../../index.html', import.meta.url), 'utf8')
+    const panelRule = css.match(/\.player-profile-panel\s*\{([^}]*)\}/)?.[1] ?? ''
     expect(css).toMatch(/\.player-profile-layer[\s\S]*position:\s*fixed/)
     expect(css).toMatch(/\.player-profile-layer button,[\s\S]*min-height:\s*44px/)
     expect(css).toMatch(/\.player-profile-layer input[\s\S]*font-size:\s*16px/)
     expect(css).toMatch(/\.player-profile-panel[\s\S]*background:\s*var\(--paper-warm\)/)
+    expect(panelRule).toMatch(/overflow:\s*clip/)
     expect(css).toMatch(/\.player-choice-card[\s\S]*min-height:\s*48px/)
     expect(css).toMatch(/html\.reduce-motion[\s\S]*\.player-profile-panel/)
     expect(css).toMatch(/@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*\.player-profile-panel/)
