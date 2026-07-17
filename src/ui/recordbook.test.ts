@@ -81,6 +81,7 @@ class FakeElement {
   parentElement: FakeElement | null = null
   hidden = false
   disabled = false
+  scrollTop = 0
   id = ''
   private ownText = ''
 
@@ -636,7 +637,97 @@ describe('RecordBook', () => {
     expect(fakeDocument.activeElement?.getAttribute('data-skin')).toBe('cinnamoroll:classic')
   })
 
-  it('moves focus to the visible close button before hiding gamification sections', () => {
+  it('gates every progression and reward surface with safe focus and callbacks', () => {
+    const parent = fakeDocument.createElement('div')
+    const state = createDefaultProgress('gated-hub')
+    for (const id of [
+      'first_hit',
+      'hits_100',
+      'hits_1000',
+      'destroys_25',
+      'favorite_finisher_50',
+      'moves_30',
+    ]) {
+      state.achievements[id] = {
+        unlockedAt: '2026-07-17T00:00:00.000Z',
+        seen: true,
+      }
+    }
+    state.profile.frameId = 'electric_night'
+    state.profile.recordBookThemeId = 'electric_night'
+    const onTabChange = vi.fn()
+    const onTitleChange = vi.fn()
+    const onFrameChange = vi.fn()
+    const onThemeChange = vi.fn()
+    const onSkinChange = vi.fn()
+    const onFilterChange = vi.fn()
+    const recordBook = new RecordBook(
+      parent as unknown as HTMLElement,
+      makeRecordBookView(state, BUILT_IN_CATALOG),
+      settings,
+      {
+        onTitleChange,
+        onSkinChange,
+        onSettingChange: vi.fn(),
+        onTabChange,
+        onFrameChange,
+        onThemeChange,
+        onFilterChange,
+      },
+      guestProfile,
+    )
+    recordBook.open()
+    const homeTab = byAttribute(parent, 'data-hub-tab', 'home')
+    const achievementsTab = byAttribute(parent, 'data-hub-tab', 'achievements')
+    const cosmeticsTab = byAttribute(parent, 'data-hub-tab', 'cosmetics')
+    const settingsTab = byAttribute(parent, 'data-hub-tab', 'settings')
+    cosmeticsTab.focus()
+    cosmeticsTab.click()
+    expect(cosmeticsTab.getAttribute('aria-selected')).toBe('true')
+    onTabChange.mockClear()
+
+    recordBook.setGamificationVisible(false)
+
+    const gamificationSections = parent.querySelectorAll('[data-gamification]')
+    expect(gamificationSections.every((section) => section.hidden)).toBe(true)
+    expect(achievementsTab.disabled).toBe(true)
+    expect(cosmeticsTab.disabled).toBe(true)
+    expect(settingsTab.disabled).toBe(false)
+    expect(homeTab.getAttribute('aria-selected')).toBe('true')
+    expect(fakeDocument.activeElement).toBe(homeTab)
+    expect(parent.querySelector('.recordbook-heading-meta')?.textContent).toBe('게스트')
+    expect(byAttribute(parent, 'data-recordbook-profile', 'guest').textContent)
+      .toContain('게스트로 즐기는 중')
+    expect(parent.querySelector('.recordbook-sheet')?.getAttribute('data-recordbook-theme'))
+      .toBe('default')
+
+    achievementsTab.click()
+    cosmeticsTab.click()
+    byAttribute(parent, 'data-achievement-status-filter', 'active').click()
+    byAttribute(parent, 'data-title', '기술 박사').click()
+    byAttribute(parent, 'data-frame', 'electric_night').click()
+    byAttribute(parent, 'data-theme', 'electric_night').click()
+    byAttribute(parent, 'data-skin', 'cinnamoroll:classic').click()
+    expect(onTabChange).not.toHaveBeenCalled()
+    expect(onTitleChange).not.toHaveBeenCalled()
+    expect(onFrameChange).not.toHaveBeenCalled()
+    expect(onThemeChange).not.toHaveBeenCalled()
+    expect(onSkinChange).not.toHaveBeenCalled()
+    expect(onFilterChange).not.toHaveBeenCalled()
+
+    recordBook.setGamificationVisible(true)
+
+    expect(achievementsTab.disabled).toBe(false)
+    expect(cosmeticsTab.disabled).toBe(false)
+    expect(homeTab.getAttribute('aria-selected')).toBe('true')
+    expect(fakeDocument.activeElement).toBe(homeTab)
+    expect(parent.querySelector('.recordbook-sheet')?.getAttribute('data-recordbook-theme'))
+      .toBe('electric_night')
+    expect(byAttribute(parent, 'data-frame', 'electric_night').getAttribute('aria-pressed'))
+      .toBe('true')
+  })
+
+  it('resets the shared scroll position on every tab switch and open', () => {
     const parent = fakeDocument.createElement('div')
     const recordBook = new RecordBook(
       parent as unknown as HTMLElement,
@@ -644,15 +735,23 @@ describe('RecordBook', () => {
       settings,
       { onTitleChange: vi.fn(), onSkinChange: vi.fn(), onSettingChange: vi.fn() }
     )
-    recordBook.open()
+    const scroll = parent.querySelector('.recordbook-scroll')!
+
+    scroll.scrollTop = 720
     buttonByText(parent, '업적').click()
-    byAttribute(parent, 'data-achievement-status-filter', 'active').focus()
+    expect(scroll.scrollTop).toBe(0)
 
-    recordBook.setGamificationVisible(false)
+    scroll.scrollTop = 640
+    buttonByText(parent, '꾸미기').click()
+    expect(scroll.scrollTop).toBe(0)
 
-    const gamificationSections = parent.querySelectorAll('[data-gamification]')
-    expect(gamificationSections.every((section) => section.hidden)).toBe(true)
-    expect(fakeDocument.activeElement?.getAttribute('aria-label')).toBe('기록책 닫기')
+    scroll.scrollTop = 500
+    recordBook.open()
+    expect(scroll.scrollTop).toBe(0)
+    recordBook.close()
+    scroll.scrollTop = 420
+    recordBook.open()
+    expect(scroll.scrollTop).toBe(0)
   })
 
   it('traps focus and closes by Escape or backdrop while returning focus', () => {
@@ -675,6 +774,8 @@ describe('RecordBook', () => {
       .filter((button) => visibleButton(button, sheet))
     expect(recordBook.isOpen).toBe(true)
     expect(backdrop.hidden).toBe(false)
+    expect(backdrop.getAttribute('data-recordbook-backdrop')).toBe('hit-area')
+    expect(backdrop.children).toEqual([sheet])
     expect(fakeDocument.activeElement).toBe(dialogButtons[0])
 
     dialogButtons[dialogButtons.length - 1].focus()
@@ -724,12 +825,23 @@ describe('RecordBook', () => {
     ]) {
       expect(styleCss).toContain(token)
     }
-    expect(styleCss).toMatch(/\.recordbook-sheet\s*\{[^}]*width:\s*100%[^}]*height:\s*100(?:dvh|%)/s)
+    expect(styleCss).toMatch(
+      /\.recordbook-backdrop\s*\{[^}]*align-items:\s*center/s
+    )
+    expect(styleCss).toMatch(
+      /\.recordbook-sheet\s*\{[^}]*width:\s*calc\([^;]*safe-area-inset-left[^;]*safe-area-inset-right[^;]*\)[^}]*height:\s*calc\([^;]*safe-area-inset-top[^;]*safe-area-inset-bottom[^;]*\)[^}]*max-width:\s*920px[^}]*border-radius:\s*(?!0)[^;]+;/s
+    )
     expect(styleCss).toMatch(/\.recordbook-scroll\s*\{[^}]*overflow-x:\s*hidden[^}]*overflow-y:\s*auto/s)
     expect(styleCss).toMatch(/\.recordbook-(?:tab|filter|close)[^{]*\{[^}]*min-height:\s*(?:44|48)px/s)
     expect(styleCss).toMatch(/\.recordbook-[^{]*:focus-visible/s)
     expect(styleCss).toMatch(/@media\s*\(max-width:\s*340px\)/)
     expect(styleCss).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.recordbook-sheet/)
+    expect(styleCss).toMatch(
+      /html\.reduce-motion \.recordbook-sheet[^{]*\{[^}]*transition:\s*none\s*!important/s
+    )
+    expect(styleCss).toMatch(
+      /html\.reduce-motion \.recordbook-tab\[aria-selected='true'\][^{]*\{[^}]*transform:\s*none\s*!important/s
+    )
     const recordBookCss = styleCss.split('/* ===== record-book')[1]
       ?.split("/* ===== what's-new")[0] ?? ''
     expect(recordBookCss).not.toContain('backdrop-filter')

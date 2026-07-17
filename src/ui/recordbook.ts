@@ -41,6 +41,10 @@ const HUB_TABS: ReadonlyArray<{ id: HubTab; label: string }> = [
   { id: 'settings', label: '설정' },
 ]
 
+function isGamificationTab(tab: HubTab): boolean {
+  return tab === 'achievements' || tab === 'cosmetics'
+}
+
 let recordBookId = 0
 
 function textElement(
@@ -107,6 +111,9 @@ export class RecordBook {
   private categoryFilter: AchievementCategoryFilter = 'all'
   private statusFilter: AchievementStatusFilter = 'all'
   private gamificationVisible = true
+  private level = 1
+  private profileStatus = '이 기기 기록'
+  private recordBookThemeId: RecordBookThemeId = 'default'
 
   constructor(
     parent: HTMLElement,
@@ -123,6 +130,7 @@ export class RecordBook {
     this.backdrop.className = 'recordbook-backdrop'
     this.backdrop.hidden = true
     this.backdrop.setAttribute('aria-hidden', 'true')
+    this.backdrop.setAttribute('data-recordbook-backdrop', 'hit-area')
 
     this.sheet = this.doc.createElement('div')
     this.sheet.className = 'recordbook-sheet'
@@ -195,11 +203,12 @@ export class RecordBook {
         .map((attribute) => ({ attribute, value: active.getAttribute(attribute) }))
         .find(({ value }) => value !== null) ?? null
       : null
-    const profileStatus = profile.visible
+    this.level = view.summary.level
+    this.profileStatus = profile.visible
       ? profile.kind === 'guest' ? '게스트' : profile.displayName
       : '이 기기 기록'
-    this.headingMeta.textContent = `LV ${view.summary.level} · ${profileStatus}`
-    this.sheet.setAttribute('data-recordbook-theme', view.profile.recordBookThemeId)
+    this.recordBookThemeId = view.profile.recordBookThemeId
+    this.updatePresentation()
 
     this.tabs.replaceChildren(...this.renderTabs())
     this.scroll.replaceChildren(
@@ -223,15 +232,24 @@ export class RecordBook {
 
   setGamificationVisible(visible: boolean): void {
     const active = this.doc.activeElement as HTMLElement | null
-    const hidesFocusedControl = !visible
-      && active !== null
-      && Array.from(this.sheet.querySelectorAll<HTMLElement>('[data-gamification]'))
+    const focusedTab = (active?.getAttribute('data-hub-tab') ?? null) as HubTab | null
+    const focusedGatedControl = active !== null && (
+      (focusedTab !== null && isGamificationTab(focusedTab))
+      || Array.from(this.sheet.querySelectorAll<HTMLElement>('[data-gamification]'))
         .some((section) => section.contains(active))
+    )
+    const activeTabBecomesGated = !visible && isGamificationTab(this.activeTab)
     this.gamificationVisible = visible
-    if (hidesFocusedControl && this.openState) this.closeButton.focus()
-    if (!visible && this.activeTab === 'achievements') this.activeTab = 'home'
-    this.applyGamificationVisibility()
+    if (activeTabBecomesGated) {
+      this.activeTab = 'home'
+      this.scroll.scrollTop = 0
+    }
+    this.updatePresentation()
     this.updateTabs()
+    this.applyGamificationVisibility()
+    if (!visible && this.openState && (activeTabBecomesGated || focusedGatedControl)) {
+      this.tabs.querySelector<HTMLElement>('[data-hub-tab="home"]')?.focus()
+    }
   }
 
   open(trigger?: HTMLElement): void {
@@ -239,6 +257,7 @@ export class RecordBook {
     const active = trigger ?? this.doc.activeElement as HTMLElement | null
     this.previousFocus = active && typeof active.focus === 'function' ? active : null
     this.activeTab = 'home'
+    this.scroll.scrollTop = 0
     this.updateTabs()
     this.openState = true
     this.backdrop.hidden = false
@@ -309,7 +328,7 @@ export class RecordBook {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
         event.preventDefault()
         const enabledTabs = HUB_TABS.filter((tab) => (
-          this.gamificationVisible || tab.id !== 'achievements'
+          this.gamificationVisible || !isGamificationTab(tab.id)
         ))
         const current = enabledTabs.findIndex((tab) => tab.id === id)
         const nextIndex = event.key === 'Home'
@@ -328,8 +347,9 @@ export class RecordBook {
   }
 
   private changeTab(tab: HubTab): void {
-    if (tab === 'achievements' && !this.gamificationVisible) return
+    if (isGamificationTab(tab) && !this.gamificationVisible) return
     this.activeTab = tab
+    this.scroll.scrollTop = 0
     this.updateTabs()
     this.callbacks.onTabChange?.(tab)
   }
@@ -340,7 +360,7 @@ export class RecordBook {
       const selected = id === this.activeTab
       button.setAttribute('aria-selected', String(selected))
       button.setAttribute('tabindex', selected ? '0' : '-1')
-      button.disabled = id === 'achievements' && !this.gamificationVisible
+      button.disabled = isGamificationTab(id) && !this.gamificationVisible
     }
     for (const currentPanel of this.scroll.querySelectorAll<HTMLElement>('[data-hub-panel]')) {
       currentPanel.hidden = currentPanel.getAttribute('data-hub-panel') !== this.activeTab
@@ -356,6 +376,7 @@ export class RecordBook {
     )
     const hero = this.doc.createElement('section')
     hero.className = 'recordbook-hero recordbook-paper-card'
+    hero.setAttribute('data-gamification', '')
     hero.setAttribute('aria-labelledby', `recordbook-level-${this.instanceId}`)
     const level = textElement(this.doc, 'h3', `LV ${view.summary.level}`)
     level.id = `recordbook-level-${this.instanceId}`
@@ -512,6 +533,7 @@ export class RecordBook {
       const button = this.filterButton(item.label, item.id === this.categoryFilter)
       button.setAttribute('data-achievement-category-filter', item.id)
       button.addEventListener('click', () => {
+        if (!this.gamificationVisible) return
         this.categoryFilter = item.id
         this.updateAchievementFilters(true)
       })
@@ -526,6 +548,7 @@ export class RecordBook {
       const button = this.filterButton(item.label, item.id === this.statusFilter)
       button.setAttribute('data-achievement-status-filter', item.id)
       button.addEventListener('click', () => {
+        if (!this.gamificationVisible) return
         this.statusFilter = item.id
         this.updateAchievementFilters(true)
       })
@@ -659,6 +682,7 @@ export class RecordBook {
       `recordbook-tab-${this.instanceId}-cosmetics`,
       'cosmetics'
     )
+    cosmetics.setAttribute('data-gamification', '')
     const intro = this.doc.createElement('header')
     intro.className = 'recordbook-panel-intro'
     intro.append(
@@ -694,7 +718,9 @@ export class RecordBook {
       button.setAttribute('data-title', choice.name)
       if (choice.unlocked) {
         button.addEventListener('click', () => {
-          this.callbacks.onTitleChange(choice.selected ? null : choice.name)
+          if (this.gamificationVisible) {
+            this.callbacks.onTitleChange(choice.selected ? null : choice.name)
+          }
         })
       }
       choices.appendChild(button)
@@ -710,7 +736,9 @@ export class RecordBook {
         true
       )
       legacy.setAttribute('data-title', view.profile.selectedTitle)
-      legacy.addEventListener('click', () => this.callbacks.onTitleChange(null))
+      legacy.addEventListener('click', () => {
+        if (this.gamificationVisible) this.callbacks.onTitleChange(null)
+      })
       choices.prepend(legacy)
     }
     section.appendChild(choices)
@@ -724,7 +752,11 @@ export class RecordBook {
     for (const choice of view.cosmetics.frames) {
       const button = this.cosmeticButton(choice.name, choice.requirement, choice.selected, choice.unlocked)
       button.setAttribute('data-frame', choice.id)
-      if (choice.unlocked) button.addEventListener('click', () => this.callbacks.onFrameChange?.(choice.id))
+      if (choice.unlocked) {
+        button.addEventListener('click', () => {
+          if (this.gamificationVisible) this.callbacks.onFrameChange?.(choice.id)
+        })
+      }
       choices.appendChild(button)
     }
     section.appendChild(choices)
@@ -738,7 +770,11 @@ export class RecordBook {
     for (const choice of view.cosmetics.themes) {
       const button = this.cosmeticButton(choice.name, choice.requirement, choice.selected, choice.unlocked)
       button.setAttribute('data-theme', choice.id)
-      if (choice.unlocked) button.addEventListener('click', () => this.callbacks.onThemeChange?.(choice.id))
+      if (choice.unlocked) {
+        button.addEventListener('click', () => {
+          if (this.gamificationVisible) this.callbacks.onThemeChange?.(choice.id)
+        })
+      }
       choices.appendChild(button)
     }
     section.appendChild(choices)
@@ -780,7 +816,9 @@ export class RecordBook {
         button.textContent = choice.label
         button.setAttribute('aria-pressed', String(choice.selected))
         button.setAttribute('data-skin', `${item.id}:${choice.id}`)
-        button.addEventListener('click', () => this.callbacks.onSkinChange(item.id, choice.id))
+        button.addEventListener('click', () => {
+          if (this.gamificationVisible) this.callbacks.onSkinChange(item.id, choice.id)
+        })
         choices.appendChild(button)
       }
       group.appendChild(choices)
@@ -876,11 +914,22 @@ export class RecordBook {
 
   private applyGamificationVisibility(): void {
     for (const section of this.sheet.querySelectorAll<HTMLElement>('[data-gamification]')) {
-      if (section.getAttribute('data-hub-panel') === 'achievements') {
-        section.hidden = !this.gamificationVisible || this.activeTab !== 'achievements'
+      const tab = section.getAttribute('data-hub-panel') as HubTab | null
+      if (tab !== null) {
+        section.hidden = !this.gamificationVisible || this.activeTab !== tab
       } else {
         section.hidden = !this.gamificationVisible
       }
     }
+  }
+
+  private updatePresentation(): void {
+    this.headingMeta.textContent = this.gamificationVisible
+      ? `LV ${this.level} · ${this.profileStatus}`
+      : this.profileStatus
+    this.sheet.setAttribute(
+      'data-recordbook-theme',
+      this.gamificationVisible ? this.recordBookThemeId : 'default'
+    )
   }
 }
