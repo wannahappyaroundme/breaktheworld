@@ -5,6 +5,7 @@ dist-ssr
 .DS_Store
 .vite
 .superpowers/
+.worktrees/
 supabase/.temp/
 supabase/.branches/
 supabase/.env.local
