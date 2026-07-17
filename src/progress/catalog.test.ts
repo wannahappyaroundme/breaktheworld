@@ -6,10 +6,12 @@ import { isCharacterWeaponId, type GameEvent } from './events'
 import { kstDayKey } from './day'
 import { reduceProgress } from './reducer'
 import {
+  ACHIEVEMENT_CATALOG,
   ACHIEVEMENT_CATALOG_VERSION,
   ACHIEVEMENTS,
   BUILT_IN_CATALOG,
   BUILT_IN_QUESTS,
+  LEVEL_THRESHOLDS,
   achievementProgress,
   achievementReached,
   assignDailyQuest,
@@ -460,6 +462,137 @@ describe('daily assignment and notices', () => {
   })
 })
 
+const EXPECTED_ACHIEVEMENT_CATALOG = [
+  [
+    'first_hit', '첫 금', '유효 공격 1회', 'destruction', 'easy', 50, '✨', 1,
+    { kind: 'lifetime', field: 'validHits', target: 1 }, false,
+  ],
+  [
+    'first_destroy', '첫 와장창', '타겟 1개 파괴', 'destruction', 'easy', 50, '💥', 1,
+    { kind: 'lifetime', field: 'totalTargets', target: 1 }, false,
+  ],
+  [
+    'hits_100', '손맛이 온다', '유효 공격 누적 100회', 'destruction', 'normal', 100, '👊', 100,
+    { kind: 'lifetime', field: 'validHits', target: 100 }, false,
+  ],
+  [
+    'hits_1000', '산산조각', '유효 공격 누적 1,000회', 'destruction', 'hard', 200, '🧩', 1_000,
+    { kind: 'lifetime', field: 'validHits', target: 1_000 }, true,
+  ],
+  [
+    'destroys_25', '파괴가 취미', '타겟 누적 25개 파괴', 'destruction', 'normal', 100, '🔨', 25,
+    { kind: 'lifetime', field: 'totalTargets', target: 25 }, false,
+  ],
+  [
+    'destroys_100', '와장창 백 번', '타겟 누적 100개 파괴', 'destruction', 'hard', 200, '💯', 100,
+    { kind: 'lifetime', field: 'totalTargets', target: 100 }, false,
+  ],
+  [
+    'favorite_weapon_50', '단짝 무기', '한 무기를 50회 이상 사용', 'destruction', 'hard', 200, '🤝', 50,
+    { kind: 'maxWeapon', field: 'uses', target: 50 }, false,
+  ],
+  [
+    'favorite_finisher_50', '최애의 한 방', '한 무기로 타겟 50개 마무리', 'destruction', 'master', 400, '🎯', 50,
+    { kind: 'maxWeapon', field: 'finishes', target: 50 }, true,
+  ],
+  [
+    'charge_1', '처음 꾹', '최대 충전 강타 1회', 'skill', 'easy', 50, '⚡', 1,
+    { kind: 'lifetime', field: 'chargedFinishers', target: 1 }, false,
+  ],
+  [
+    'charge_master', '꾹 와장창 장인', '최대 충전 강타 누적 10회', 'skill', 'normal', 100, '🔋', 10,
+    { kind: 'lifetime', field: 'chargedFinishers', target: 10 }, false,
+  ],
+  [
+    'charge_50', '충전 달인', '최대 충전 강타 누적 50회', 'skill', 'hard', 200, '🌩️', 50,
+    { kind: 'lifetime', field: 'chargedFinishers', target: 50 }, false,
+  ],
+  [
+    'combo_10', '연속 출발', '최고 연속 10 달성', 'skill', 'easy', 50, '🔗', 10,
+    { kind: 'lifetime', field: 'bestCombo', target: 10 }, false,
+  ],
+  [
+    'combo_50', '콤보 폭주', '최고 연속 50 달성', 'skill', 'normal', 100, '🔥', 50,
+    { kind: 'lifetime', field: 'bestCombo', target: 50 }, false,
+  ],
+  [
+    'combo_100', '끊기지 않는 손', '최고 연속 100 달성', 'skill', 'hard', 200, '♾️', 100,
+    { kind: 'lifetime', field: 'bestCombo', target: 100 }, true,
+  ],
+  [
+    'moves_3', '기술 발견', '서로 다른 무기·기술 조합 3개 발견', 'skill', 'easy', 50, '🧪', 3,
+    { kind: 'movePairs', target: 3 }, false,
+  ],
+  [
+    'moves_30', '기술 박사', '서로 다른 무기·기술 조합 30개 발견', 'skill', 'master', 400, '🎓', 30,
+    { kind: 'movePairs', target: 30 }, true,
+  ],
+  [
+    'weapons_3', '세 가지 손맛', '서로 다른 무기 3종 사용', 'exploration', 'easy', 50, '🧰', 3,
+    { kind: 'distinctWeapons', target: 3 }, false,
+  ],
+  [
+    'variety_10', '골고루 파괴', '서로 다른 무기 10종 사용', 'exploration', 'normal', 100, '🎒', 10,
+    { kind: 'distinctWeapons', target: 10 }, false,
+  ],
+  [
+    'weapons_21', '무기 도감 완성', '모든 무기 21종 사용', 'exploration', 'hard', 200, '📚', 21,
+    { kind: 'distinctWeapons', target: 21 }, true,
+  ],
+  [
+    'finisher_1', '첫 마무리', '무기 1종으로 타겟 마무리', 'exploration', 'easy', 50, '🏁', 1,
+    { kind: 'distinctFinishers', target: 1 }, false,
+  ],
+  [
+    'finishers_7', '마무리 수집가', '서로 다른 무기 7종으로 타겟 마무리', 'exploration', 'normal', 100, '🎖️', 7,
+    { kind: 'distinctFinishers', target: 7 }, false,
+  ],
+  [
+    'finishers_21', '모든 손의 마무리', '모든 무기 21종으로 타겟 마무리', 'exploration', 'master', 400, '🏆', 21,
+    { kind: 'distinctFinishers', target: 21 }, true,
+  ],
+  [
+    'character_1', '캐릭터 첫 만남', '캐릭터 무기 1종 사용', 'exploration', 'easy', 50, '👋', 1,
+    { kind: 'distinctCharacters', target: 1 }, false,
+  ],
+  [
+    'characters_9', '아홉 친구', '캐릭터 무기 9종 모두 사용', 'exploration', 'normal', 100, '🎉', 9,
+    { kind: 'distinctCharacters', target: 9 }, false,
+  ],
+  [
+    'world_cycle', '세상 한 바퀴', '세상·지구·도시를 각각 1회 파괴', 'journey', 'easy', 50, '🌍', 3,
+    { kind: 'worldTargets', target: 3 }, false,
+  ],
+  [
+    'stamp_1', '첫 도장', '오늘의 도전 도장 1개 획득', 'journey', 'easy', 50, '⭐', 1,
+    { kind: 'lifetime', field: 'stamps', target: 1 }, false,
+  ],
+  [
+    'stamps_7', '도장 수집가', '오늘의 도전 도장 누적 7개', 'journey', 'normal', 100, '📒', 7,
+    { kind: 'lifetime', field: 'stamps', target: 7 }, false,
+  ],
+  [
+    'weapons_5x3', '손에 익는 중', '서로 다른 무기 5종을 각각 3회 이상 사용', 'journey', 'normal', 100, '🖐️', 5,
+    { kind: 'weaponsAtUses', weaponCount: 5, usesEach: 3 }, false,
+  ],
+  [
+    'world_10_each', '세 세계 단골', '세상·지구·도시를 각각 10회 파괴', 'journey', 'normal', 100, '🗺️', 10,
+    { kind: 'allTargets', targetEach: 10 }, false,
+  ],
+  [
+    'weapons_15x10', '파괴 연습장', '서로 다른 무기 15종을 각각 10회 이상 사용', 'journey', 'hard', 200, '🏋️', 15,
+    { kind: 'weaponsAtUses', weaponCount: 15, usesEach: 10 }, false,
+  ],
+  [
+    'world_50_each', '세계 순환 전문가', '세상·지구·도시를 각각 50회 파괴', 'journey', 'hard', 200, '🌐', 50,
+    { kind: 'allTargets', targetEach: 50 }, true,
+  ],
+  [
+    'weapons_21x25', '모든 무기의 달인', '모든 무기 21종을 각각 25회 이상 사용', 'journey', 'master', 400, '👑', 21,
+    { kind: 'weaponsAtUses', weaponCount: 21, usesEach: 25 }, true,
+  ],
+] as const
+
 describe('permanent achievements', () => {
   const countByTier = () => ACHIEVEMENTS.reduce<Record<string, number>>((counts, item) => {
     counts[item.tier] = (counts[item.tier] ?? 0) + 1
@@ -469,6 +602,32 @@ describe('permanent achievements', () => {
   const pickAchievementNames = (ids: readonly string[]) => ids.map((id) => (
     ACHIEVEMENTS.find((item) => item.id === id)?.name
   ))
+
+  const findAchievement = (id: string) => {
+    const definition = ACHIEVEMENT_CATALOG.find((item) => item.id === id)
+    if (!definition) throw new Error(`Unknown achievement: ${id}`)
+    return definition
+  }
+
+  const expectBoundary = (
+    id: string,
+    below: ProgressStateV1,
+    at: ProgressStateV1
+  ) => {
+    const definition = findAchievement(id)
+    expect(achievementProgress(definition, below)).toBe(definition.target - 1)
+    expect(achievementReached(definition, below)).toBe(false)
+    expect(achievementProgress(definition, at)).toBe(definition.target)
+    expect(achievementReached(definition, at)).toBe(true)
+  }
+
+  it('locks every public achievement field to the approved golden catalog', () => {
+    const expected = EXPECTED_ACHIEVEMENT_CATALOG.map(([
+      id, name, description, category, tier, xp, icon, target, condition, titleReward,
+    ]) => ({ id, name, description, category, tier, xp, icon, target, condition, titleReward }))
+
+    expect(ACHIEVEMENT_CATALOG).toEqual(expected)
+  })
 
   it('defines the approved immutable achievement and XP contract', () => {
     expect(ACHIEVEMENT_CATALOG_VERSION).toBe(2)
@@ -491,11 +650,12 @@ describe('permanent achievements', () => {
       '세계 순환 전문가',
       '모든 무기의 달인',
     ])
-    expect(Object.isFrozen(ACHIEVEMENTS)).toBe(true)
-    for (const item of ACHIEVEMENTS) {
+    expect(Object.isFrozen(ACHIEVEMENT_CATALOG)).toBe(true)
+    for (const item of ACHIEVEMENT_CATALOG) {
       expect(Object.isFrozen(item)).toBe(true)
       expect(Object.isFrozen(item.condition)).toBe(true)
     }
+    expect(Object.isFrozen(ACHIEVEMENTS)).toBe(true)
   })
 
   it('keeps every legacy achievement identity and title', () => {
@@ -539,6 +699,97 @@ describe('permanent achievements', () => {
     expect(state.achievements).toEqual({})
   })
 
+  it('uses the exact lifetime counter at the below and reached boundaries', () => {
+    const cases = [
+      ['first_hit', 'validHits', 0, 1],
+      ['first_destroy', 'totalTargets', 0, 1],
+      ['charge_1', 'chargedFinishers', 0, 1],
+      ['combo_10', 'bestCombo', 9, 10],
+      ['stamp_1', 'stamps', 0, 1],
+    ] as const
+
+    for (const [id, field, belowValue, atValue] of cases) {
+      const below = createDefaultProgress(`below-${id}`)
+      const at = createDefaultProgress(`at-${id}`)
+      below.lifetime[field] = belowValue
+      at.lifetime[field] = atValue
+      expectBoundary(id, below, at)
+    }
+  })
+
+  it('uses per-weapon maxima instead of unrelated lifetime counters', () => {
+    const cases = [
+      ['favorite_weapon_50', 'uses'],
+      ['favorite_finisher_50', 'finishes'],
+    ] as const
+
+    for (const [id, field] of cases) {
+      const below = createDefaultProgress(`below-${id}`)
+      const at = createDefaultProgress(`at-${id}`)
+      below.lifetime.validHits = 10_000
+      below.lifetime.totalTargets = 10_000
+      at.lifetime.validHits = 10_000
+      at.lifetime.totalTargets = 10_000
+      below.byWeapon.hammer = { uses: 0, finishes: 0, seenMoves: [] }
+      at.byWeapon.hammer = { uses: 0, finishes: 0, seenMoves: [] }
+      below.byWeapon.hammer[field] = 49
+      at.byWeapon.hammer[field] = 50
+      expectBoundary(id, below, at)
+    }
+  })
+
+  it('counts unique move pairs and distinct weapon, finisher, and character families', () => {
+    const movesBelow = createDefaultProgress('moves-below')
+    movesBelow.byWeapon.hammer = { uses: 0, finishes: 0, seenMoves: ['quick', 'quick', 'drag'] }
+    const movesAt = structuredClone(movesBelow)
+    movesAt.byWeapon.laser = { uses: 0, finishes: 0, seenMoves: ['quick'] }
+    expectBoundary('moves_3', movesBelow, movesAt)
+
+    const weaponsBelow = createDefaultProgress('weapons-below')
+    weaponsBelow.lifetime.distinctWeaponIds = ['hammer', 'hammer', 'laser']
+    const weaponsAt = structuredClone(weaponsBelow)
+    weaponsAt.lifetime.distinctWeaponIds.push('glass')
+    expectBoundary('weapons_3', weaponsBelow, weaponsAt)
+
+    const finishersBelow = createDefaultProgress('finishers-below')
+    finishersBelow.byWeapon.hammer = { uses: 50, finishes: 0, seenMoves: [] }
+    const finishersAt = structuredClone(finishersBelow)
+    finishersAt.byWeapon.hammer.finishes = 1
+    expectBoundary('finisher_1', finishersBelow, finishersAt)
+
+    const charactersBelow = createDefaultProgress('characters-below')
+    charactersBelow.byWeapon.hammer = { uses: 50, finishes: 0, seenMoves: [] }
+    const charactersAt = structuredClone(charactersBelow)
+    charactersAt.byWeapon.cinnamoroll = { uses: 1, finishes: 0, seenMoves: [] }
+    expectBoundary('character_1', charactersBelow, charactersAt)
+  })
+
+  it('requires every world target and the exact weapon-use threshold families', () => {
+    const worldBelow = createDefaultProgress('world-below')
+    worldBelow.byTarget.word.destroys = 1
+    worldBelow.byTarget.earth.destroys = 1
+    const worldAt = structuredClone(worldBelow)
+    worldAt.byTarget.city.destroys = 1
+    expectBoundary('world_cycle', worldBelow, worldAt)
+
+    const allTargetsBelow = createDefaultProgress('all-targets-below')
+    allTargetsBelow.byTarget.word.destroys = 10
+    allTargetsBelow.byTarget.earth.destroys = 10
+    allTargetsBelow.byTarget.city.destroys = 9
+    const allTargetsAt = structuredClone(allTargetsBelow)
+    allTargetsAt.byTarget.city.destroys = 10
+    expectBoundary('world_10_each', allTargetsBelow, allTargetsAt)
+
+    const weaponsAtUsesBelow = createDefaultProgress('weapons-at-uses-below')
+    for (const id of ['hammer', 'fist', 'glass', 'laser']) {
+      weaponsAtUsesBelow.byWeapon[id] = { uses: 3, finishes: 0, seenMoves: [] }
+    }
+    weaponsAtUsesBelow.byWeapon.meteor = { uses: 2, finishes: 0, seenMoves: [] }
+    const weaponsAtUsesAt = structuredClone(weaponsAtUsesBelow)
+    weaponsAtUsesAt.byWeapon.meteor.uses = 3
+    expectBoundary('weapons_5x3', weaponsAtUsesBelow, weaponsAtUsesAt)
+  })
+
   it('derives XP and level only from recognized unlocked achievement IDs', () => {
     const state = createDefaultProgress('seed')
     state.achievements = {
@@ -569,24 +820,30 @@ describe('permanent achievements', () => {
   })
 
   it('exposes only cosmetics earned at the supplied bounded level', () => {
-    expect(availableFrameIds(1)).toEqual(['default'])
-    expect(availableFrameIds(5)).toEqual(['default', 'first_crack'])
-    expect(availableFrameIds(10)).toEqual(['default', 'first_crack', 'electric_night'])
-    expect(availableFrameIds(15)).toEqual([
-      'default', 'first_crack', 'electric_night', 'coral_burst',
+    expect(LEVEL_THRESHOLDS).toEqual([
+      0, 50, 100, 200, 300, 450, 600, 800, 1_000, 1_250,
+      1_500, 1_800, 2_100, 2_450, 2_800, 3_200, 3_600, 4_000, 4_400, 4_700,
     ])
-    expect(availableFrameIds(20)).toEqual([
-      'default', 'first_crack', 'electric_night', 'coral_burst', 'legend_crown',
-    ])
+    expect(Object.isFrozen(LEVEL_THRESHOLDS)).toBe(true)
+
+    const rewardCases = [
+      [1, ['default'], ['default']],
+      [4, ['default'], ['default']],
+      [5, ['default', 'first_crack'], ['default']],
+      [9, ['default', 'first_crack'], ['default']],
+      [10, ['default', 'first_crack', 'electric_night'], ['default', 'electric_night']],
+      [14, ['default', 'first_crack', 'electric_night'], ['default', 'electric_night']],
+      [15, ['default', 'first_crack', 'electric_night', 'coral_burst'], ['default', 'electric_night', 'coral_burst']],
+      [19, ['default', 'first_crack', 'electric_night', 'coral_burst'], ['default', 'electric_night', 'coral_burst']],
+      [20, ['default', 'first_crack', 'electric_night', 'coral_burst', 'legend_crown'], ['default', 'electric_night', 'coral_burst', 'legend_crown']],
+    ] as const
+
+    for (const [level, frames, themes] of rewardCases) {
+      expect(availableFrameIds(level)).toEqual(frames)
+      expect(availableThemeIds(level)).toEqual(themes)
+    }
     expect(availableFrameIds(99)).toEqual(availableFrameIds(20))
     expect(availableFrameIds(Number.NaN)).toEqual(['default'])
-
-    expect(availableThemeIds(1)).toEqual(['default'])
-    expect(availableThemeIds(10)).toEqual(['default', 'electric_night'])
-    expect(availableThemeIds(15)).toEqual(['default', 'electric_night', 'coral_burst'])
-    expect(availableThemeIds(20)).toEqual([
-      'default', 'electric_night', 'coral_burst', 'legend_crown',
-    ])
     expect(availableThemeIds(99)).toEqual(availableThemeIds(20))
     expect(availableThemeIds(Number.NaN)).toEqual(['default'])
   })
