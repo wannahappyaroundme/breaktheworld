@@ -1276,11 +1276,19 @@ describe('Game progression UI integration', () => {
   it('refreshes unlocked share-title evidence after accepted player projections', () => {
     const initial = createDefaultProgress('projection-initial')
     const rewarded = createDefaultProgress('projection-rewarded')
+    rewarded.achievements.first_hit = {
+      unlockedAt: '2026-07-17T03:00:00.000Z',
+      seen: true,
+    }
+    rewarded.achievements.first_destroy = {
+      unlockedAt: '2026-07-17T03:00:00.000Z',
+      seen: true,
+    }
     rewarded.achievements.hits_1000 = {
       unlockedAt: '2026-07-17T03:00:00.000Z',
       seen: true,
     }
-    rewarded.profile.selectedTitle = '산산조각'
+    rewarded.profile.selectedTitle = '첫 와장창'
     let state = initial
     const game = Object.create(Game.prototype) as any
     game.progress = {
@@ -1305,8 +1313,8 @@ describe('Game progression UI integration', () => {
       userId: 'player-1', generation: 3, revision: 1, state: rewarded,
     })).toBe(true)
     expect(game.shareProgress).toMatchObject({
-      selectedTitle: '산산조각',
-      unlockedTitleIds: ['hits_1000'],
+      selectedTitle: '첫 와장창',
+      unlockedTitleIds: ['first_destroy', 'hits_1000'],
     })
 
     expect(game.applyPlayerProjection({

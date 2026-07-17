@@ -33,7 +33,7 @@ import {
   progressTargetId,
   type ProgressPersistence,
 } from './game-progress'
-import { BUILT_IN_CATALOG } from './progress/catalog'
+import { BUILT_IN_CATALOG, isAchievementTitle } from './progress/catalog'
 import { kstDayKey } from './progress/day'
 import type { EventSource, GameEvent } from './progress/events'
 import type { ProfileFrameId, ProgressStateV1, RecordBookThemeId } from './progress/types'
@@ -506,8 +506,8 @@ export class Game {
     const view = makeRecordBookView(state, this.progress.questCatalog)
     this.shareProgress = {
       ...view.profile,
-      unlockedTitleIds: view.cosmetics.titles
-        .filter(({ unlocked }) => unlocked)
+      unlockedTitleIds: view.achievements.items
+        .filter(({ complete, name }) => complete && isAchievementTitle(name))
         .map(({ id }) => id),
       level: view.summary.level,
     }

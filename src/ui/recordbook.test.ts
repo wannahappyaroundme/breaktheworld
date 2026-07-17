@@ -686,6 +686,7 @@ describe('RecordBook', () => {
     cosmeticsTab.focus()
     cosmeticsTab.click()
     expect(cosmeticsTab.getAttribute('aria-selected')).toBe('true')
+    byAttribute(parent, 'data-title', '기술 박사').focus()
     onTabChange.mockClear()
 
     recordBook.setGamificationVisible(false)

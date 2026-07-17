@@ -248,7 +248,8 @@ export class RecordBook {
     this.updateTabs()
     this.applyGamificationVisibility()
     if (!visible && this.openState && (activeTabBecomesGated || focusedGatedControl)) {
-      this.tabs.querySelector<HTMLElement>('[data-hub-tab="home"]')?.focus()
+      const focusTab = activeTabBecomesGated ? 'home' : this.activeTab
+      this.tabs.querySelector<HTMLElement>(`[data-hub-tab="${focusTab}"]`)?.focus()
     }
   }
 
